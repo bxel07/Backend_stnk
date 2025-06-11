@@ -36,6 +36,7 @@ from app.db.database import SessionLocal
     Init Instance [app, middleware, pipeline ocr, DB]
 '''
 app = FastAPI()
+app.include_router(prefix="/api/v1")
 
 Base.metadata.create_all(bind=engine)
 
