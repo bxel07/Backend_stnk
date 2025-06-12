@@ -1,7 +1,10 @@
 from sqlalchemy import Boolean, Column, Integer, String, ForeignKey, DateTime, Text
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from app.db.database import Base
+
+# UTC+7 Timezone (WIB)
+JAKARTA_TZ = timezone(timedelta(hours=7))
 
 
 class STNKData(Base):
@@ -10,9 +13,10 @@ class STNKData(Base):
     id = Column(Integer, primary_key=True, index=True)
     file = Column(String, nullable=True)
     nomor_rangka = Column(String, nullable=True)
-    corrected = Column(Boolean, default=False)  # Add this line
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    corrected = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(JAKARTA_TZ), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(JAKARTA_TZ),
+                        onupdate=lambda: datetime.now(JAKARTA_TZ), nullable=False)
     
     corrections = relationship(
         "STNKFieldCorrection",
@@ -29,6 +33,6 @@ class STNKFieldCorrection(Base):
     field_name = Column(String, nullable=False)
     original_value = Column(Text, nullable=True)
     corrected_value = Column(Text, nullable=True)
-    corrected_at = Column(DateTime, default=datetime.utcnow)
-    
+    corrected_at = Column(DateTime, default=lambda: datetime.now(JAKARTA_TZ))
+
     stnk_data = relationship("STNKData", back_populates="corrections")

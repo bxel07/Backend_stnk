@@ -2,6 +2,7 @@
     Import Lib Untuk Utility
 '''
 
+from datetime import datetime, timedelta
 from typing import List, Optional
 from openai import BaseModel
 import setuptools
@@ -13,7 +14,7 @@ import os
 '''
     Import Lib Untuk API
 '''
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import HTTPException
 
@@ -117,51 +118,6 @@ def get_ktp_data_with_corrections():
 
     db.close()
     return {"data": corrected_entries}
-
-# @app.post("/upload-stnk/")
-# async def upload_image(file: UploadFile = File(...)):
-#     temp_path = f"temp_{file.filename}"
-#     with open(temp_path, "wb") as buffer:
-#         shutil.copyfileobj(file.file, buffer)
-
-#     db = SessionLocal()
-#     try:
-#         output = pipeline.predict(
-#             input=temp_path,
-#             use_doc_orientation_classify=False,
-#             use_doc_unwarping=False,
-#             use_textline_orientation=False,
-#         )
-
-#         nomor_rangka, info, texts = extract_nomor_rangka_fast(output)
-
-#         if nomor_rangka and nomor_rangka.strip() not in ["", "-"]:
-#             existing = db.query(STNKData).filter(STNKData.nomor_rangka == nomor_rangka).first()
-#             if existing:
-#                 return {
-#                     "status": "error",
-#                     "message": "The Frame Number already exists in the database"
-#                 }
-
-#         stnk_entry = STNKData(file=file.filename, nomor_rangka=nomor_rangka)
-#         db.add(stnk_entry)
-#         db.commit()
-#         db.refresh(stnk_entry)
-
-#         return {
-#             "filename": file.filename,
-#             "nomor_rangka": nomor_rangka,
-#             "full_text" : texts,
-#             'info' : info
-#         }
-
-#     except Exception as e:
-#         return {"status": "error", "message": str(e)}
-
-#     finally:
-#         db.close()
-#         if os.path.exists(temp_path):
-#             os.remove(temp_path)
 
 # Pydantic model for save request
 class STNKSaveRequest(BaseModel):
@@ -280,6 +236,7 @@ async def save_data_stnk(request: STNKSaveRequest):
     
     finally:
         db.close()
+
 @app.put("/stnk-data/{stnk_id}/correction/")
 def update_corrections(stnk_id: int, corrections: List[CorrectionItem]):
     db = SessionLocal()
@@ -316,5 +273,42 @@ def update_corrections(stnk_id: int, corrections: List[CorrectionItem]):
         db.rollback()  # Pastikan rollback jika error
         return {"status": "error", "message": str(e)}
 
+    finally:
+        db.close()
+
+@app.get("/stnk-data/by-created-date/")
+def get_stnk_data_by_created_date(date: str = Query(..., description="Tanggal dalam format YYYY-MM-DD")):
+    db = SessionLocal()
+    try:
+        # Konversi string ke datetime
+        target_date = datetime.strptime(date, "%Y-%m-%d")
+        
+        # Tentukan rentang dari awal sampai akhir hari tersebut
+        start_datetime = target_date
+        end_datetime = target_date + timedelta(days=1)
+
+        # Query entri yang created_at-nya di tanggal tersebut
+        entries = db.query(STNKData).filter(
+            STNKData.created_at >= start_datetime,
+            STNKData.created_at < end_datetime
+        ).order_by(STNKData.created_at.desc()).all()
+
+        results = []
+        for entry in entries:
+            data = entry.__dict__.copy()
+            data.pop("_sa_instance_state", None)
+            results.append(data)
+
+        return {
+            "status": "success",
+            "date": date,
+            "count": len(results),
+            "data": results
+        }
+
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Format tanggal salah. Gunakan format YYYY-MM-DD.")
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
     finally:
         db.close()
