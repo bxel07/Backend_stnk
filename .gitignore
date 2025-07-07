@@ -1,1 +1,20 @@
 stnk_reader
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# FastAPI specific
+.env
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

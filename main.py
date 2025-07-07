@@ -3,18 +3,22 @@
 '''
 
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Dict, List, Optional
+from fastapi.concurrency import run_in_threadpool
 from openai import BaseModel
+from requests import Session
 import setuptools
 import uuid
 import shutil
 import os
+from functools import partial
+
 
 
 '''
     Import Lib Untuk API
 '''
-from fastapi import FastAPI, Query, UploadFile, File
+from fastapi import FastAPI, Path, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import HTTPException
 
@@ -23,6 +27,10 @@ from fastapi import HTTPException
 '''
 from app.pipeline.extract_nomor_rangka import extract_nomor_rangka_fast
 from paddlex import create_pipeline
+# from app.pipeline.opt_extract_nomor_rangka import run_batch_processing
+from app.pipeline.opt_ocr_extract_nomor_rangka import run_batch_processing
+
+
 
 '''
     Import DB
@@ -31,12 +39,56 @@ from app.db.database import Base, engine
 from app.db.model import STNKData
 from app.db.model import STNKFieldCorrection
 from app.db.database import SessionLocal
+from fastapi.staticfiles import StaticFiles
+from paddleocr import PaddleOCR
+
 
 
 '''
     Init Instance [app, middleware, pipeline ocr, DB]
 '''
-app = FastAPI(root_path="/api")
+
+from contextlib import asynccontextmanager
+
+# Dictionary untuk menyimpan model OCR yang sudah dimuat
+# Ini akan diisi saat startup aplikasi.
+ml_models: Dict[str, PaddleOCR] = {}
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Fungsi Lifespan untuk mengelola model PaddleOCR.
+    Model dimuat saat startup dan dibersihkan saat shutdown.
+    """
+    # ====== STARTUP ======
+    # Muat model PaddleOCR ke dalam memori.
+    # Parameter bisa disesuaikan sesuai kebutuhan.
+    # Contoh: use_gpu=True jika Anda memiliki GPU dan paddlepaddle-gpu terinstal.
+    # lang='en' untuk bahasa Inggris, 'id' untuk Indonesia, atau 'ch' untuk Mandarin.
+    print("Memuat model PaddleOCR...")
+    # ml_models["ocr_model"] = create_pipeline('./my_path/OCR.yaml', device="cpu", use_hpip=False)
+    ml_models["ocr_model"] = PaddleOCR(
+        text_detection_model_name="PP-OCRv5_mobile_det",
+        text_recognition_model_name="PP-OCRv5_mobile_rec",
+        use_doc_orientation_classify=True,
+        use_textline_orientation=False,
+        text_det_box_thresh=0.6,
+        text_det_unclip_ratio=1.6,  
+        lang='id'                        
+    )
+    print("Model PaddleOCR berhasil dimuat.")
+    
+    yield
+    
+    # ====== SHUTDOWN ======
+    # Bersihkan sumber daya saat aplikasi berhenti.
+    print("Membersihkan model OCR...")
+    ml_models.clear()
+    print("Sumber daya telah dibersihkan.")
+
+app = FastAPI(root_path="/api", lifespan=lifespan)
+
+app.mount("/storage", StaticFiles(directory="app/storage"), name="storage")
 
 Base.metadata.create_all(bind=engine)
 
@@ -69,33 +121,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Inisialisasi pipeline OCR sekali saat aplikasi dimulai
-pipeline = create_pipeline(pipeline="OCR")
+# # Inisialisasi pipeline OCR sekali saat aplikasi dimulai
+# pipeline = create_pipeline(pipeline="OCR")
+
 
 @app.get("/")
 def read_root():
     return {"Hello": "World"}
 
 
-
-'''
-    OCR API
-'''
 @app.get("/stnk-data/")
 def get_all_stnk_data():
     db = SessionLocal()
     try:
         stnk_entries = db.query(STNKData).all()
         data = []
+
         for entry in stnk_entries:
             entry_dict = entry.__dict__.copy()
             entry_dict.pop("_sa_instance_state", None)
+
+            # Tambahkan image_url jika file_path tersedia
+            if entry.path:
+                relative_path = os.path.relpath(entry.path, start="app")  # contoh: storage/batch_xxx/namafile.jpg
+                image_url = f"/{relative_path.replace(os.sep, '/')}"
+            else:
+                image_url = None
+
+            entry_dict["image_url"] = image_url
             data.append(entry_dict)
+
         return {"status": "success", "data": data}
     except Exception as e:
         return {"status": "error", "message": str(e)}
     finally:
         db.close()
+
 
 @app.get("/stnk-data/with-correction/")
 def get_ktp_data_with_corrections():
@@ -127,71 +188,129 @@ class STNKSaveRequest(BaseModel):
     original_nomor_rangka: Optional[str] = None
 
 # Endpoint 1: Extract data only (no database save)
-@app.post("/upload-stnk/")
-async def upload_stnk(file: UploadFile = File(...)):
-    """
-    Extract data from STNK image without saving to database
-    Returns the extracted information for user review
-    """
-    temp_path = f"temp_{file.filename}"
+# @app.post("/upload-stnk/")
+# async def upload_stnk(file: UploadFile = File(...)):
+#     """
+#     Extract data from STNK image without saving to database
+#     Returns the extracted information for user review
+#     """
+#     temp_path = f"temp_{file.filename}"
     
-    try:
-        # Save uploaded file temporarily
-        with open(temp_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+#     try:
+#         # Save uploaded file temporarily
+#         with open(temp_path, "wb") as buffer:
+#             shutil.copyfileobj(file.file, buffer)
         
-        # Process the image using your pipeline
-        output = pipeline.predict(
-            input=temp_path,
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False,
+#         # Process the image using your pipeline
+#         output = pipeline.predict(
+#             input=temp_path,
+#             use_doc_orientation_classify=True,
+#             use_doc_unwarping=True,
+#             use_textline_orientation=True,
+#         )
+        
+#         # Extract nomor rangka and other information
+#         nomor_rangka, info, texts = extract_nomor_rangka_fast(output)
+        
+#         # Return extracted data without saving
+#         return {
+#             "status": "success",
+#             "filename": file.filename,
+#             "nomor_rangka": nomor_rangka,
+#             "full_text": texts,
+#             "info": info,
+#             "message": "Data extracted successfully. Please review and confirm."
+#         }
+        
+#     except Exception as e:
+#         return {
+#             "status": "error", 
+#             "message": f"Error extracting data: {str(e)}"
+#         }
+    
+#     finally:
+#         # Clean up temporary file
+#         if os.path.exists(temp_path):
+#             os.remove(temp_path)
+
+# =============================================================================
+# ENDPOINT API TERINTEGRASI
+# =============================================================================
+@app.post("/upload-stnk-batch/")
+async def upload_stnk_batch(files: List[UploadFile] = File(..., description="Unggah hingga 10 gambar STNK untuk diproses.")):
+    """
+    Endpoint terintegrasi yang melakukan:
+    1. Menerima unggahan batch gambar (maksimal 10 file).
+    2. Menyimpan file-file tersebut ke direktori sementara yang unik.
+    3. **Memanggil fungsi pemrosesan OCR untuk direktori tersebut secara non-blocking.**
+    4. Mengembalikan hasil lengkap dari pemrosesan OCR.
+    5. **Membersihkan direktori sementara secara otomatis setelah selesai.**
+    """
+    if len(files) > 10:
+        raise HTTPException(
+            status_code=400, 
+            detail="Error: Maksimal 10 file yang dapat diunggah sekaligus."
+        )
+
+    batch_id = str(uuid.uuid4())
+    # Pastikan direktori 'app/storage' ada atau dapat dibuat
+    storage_path = os.path.join("app", "storage")
+    batch_dir = os.path.join(storage_path, f"batch_{batch_id}")
+    os.makedirs(batch_dir, exist_ok=True)
+
+    try:
+        # 3. Simpan semua file yang diunggah ke direktori sementara
+        for file in files:
+            try:
+                file_path = os.path.join(batch_dir, file.filename)
+                with open(file_path, "wb") as buffer:
+                    shutil.copyfileobj(file.file, buffer)
+            finally:
+                await file.close()
+
+        # 4. JALANKAN PROSES OCR YANG BERAT DI THREAD TERPISAH
+        # Ini adalah langkah kuncinya. Kita memberitahu FastAPI untuk menjalankan
+        # fungsi 'process_batch_images' yang blocking di thread pool.
+        # 'await' menunggu hasilnya tanpa memblokir event-loop utama.
+        processing_results = await run_in_threadpool(
+            partial(run_batch_processing, batch_directory=batch_dir, pipeline_path=ml_models["ocr_model"], candidate_count=10)
         )
         
-        # Extract nomor rangka and other information
-        nomor_rangka, info, texts = extract_nomor_rangka_fast(output)
-        
-        # Return extracted data without saving
-        return {
-            "status": "success",
-            "filename": file.filename,
-            "nomor_rangka": nomor_rangka,
-            "full_text": texts,
-            "info": info,
-            "message": "Data extracted successfully. Please review and confirm."
-        }
-        
-    except Exception as e:
-        return {
-            "status": "error", 
-            "message": f"Error extracting data: {str(e)}"
-        }
-    
-    finally:
-        # Clean up temporary file
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        # 5. Kembalikan hasil dari fungsi pemrosesan
+        return processing_results
 
-# Endpoint 2: Save confirmed data to database
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Terjadi error yang tidak terduga pada level server: {str(e)}"
+        )
+    finally:
+        # 6. PEMBERSIHAN
+        # Blok 'finally' akan selalu dieksekusi, baik proses berhasil atau gagal.
+        # Ini memastikan tidak ada file sampah yang tertinggal di server.
+        if os.path.exists(batch_dir):
+            # shutil.rmtree(batch_dir)
+            print(f"INFO: Direktori sementara '{batch_dir}' telah berhasil dihapus.")
+
+class STNKDetail(BaseModel):
+    jumlah: Optional[int] = None
+
+class STNKSaveRequest(BaseModel):
+    filename: str
+    path: str
+    nomor_rangka: str
+    details: Optional[STNKDetail] = None
+
 @app.post("/save-stnk-data/")
 async def save_data_stnk(request: STNKSaveRequest):
-    """
-    Save confirmed STNK data to database
-    This endpoint is called after user reviews and confirms the extracted data
-    """
     db = SessionLocal()
     
     try:
-        print(f"Received request: {request}")  # Debug log
+        print(f"Received request: {request}")
         
-        # Validate that nomor_rangka is not empty
         if not request.nomor_rangka or request.nomor_rangka.strip() in ["", "-"]:
-            raise HTTPException(
-                status_code=400, 
-                detail="Nomor rangka cannot be empty"
-            )
+            raise HTTPException(status_code=400, detail="Nomor rangka cannot be empty")
         
-        # Check if nomor_rangka already exists in database
         existing = db.query(STNKData).filter(
             STNKData.nomor_rangka == request.nomor_rangka.strip()
         ).first()
@@ -201,39 +320,83 @@ async def save_data_stnk(request: STNKSaveRequest):
                 "status": "error",
                 "message": "The Frame Number already exists in the database"
             }
+
+        jumlah_value = request.details.jumlah if request.details else None
         
-        # Create new STNK entry - only using fields that exist in the model
+        # Rename file logic
+        old_path = request.path  # Contoh: 'app/storage/batch_abc/stnk1.jpg'
+        old_dir = os.path.dirname(old_path)
+        ext = os.path.splitext(request.filename)[1]  # Ambil ekstensi (misalnya: .jpg)
+        new_filename = f"{request.nomor_rangka.strip()}{ext}"
+        new_path = os.path.join(old_dir, new_filename)
+
+        try:
+            os.rename(old_path, new_path)
+            print(f"File renamed from {old_path} to {new_path}")
+        except FileNotFoundError:
+            print(f"[WARNING] File tidak ditemukan untuk rename: {old_path}")
+        except Exception as e:
+            print(f"[ERROR] Rename file gagal: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Gagal mengganti nama file: {e}")
+
+        # Simpan ke database dengan nama file baru
         stnk_entry = STNKData(
-            file=request.filename,
-            nomor_rangka=request.nomor_rangka.strip()
-            # created_at and updated_at will be set automatically by default values
+            file=new_filename,
+            path=new_path,
+            nomor_rangka=request.nomor_rangka.strip(),
+            jumlah=jumlah_value
         )
         
-        # Save to database
         db.add(stnk_entry)
         db.commit()
         db.refresh(stnk_entry)
-        
-        print(f"Data saved successfully: {stnk_entry}")  # Debug log
-        
+
         return {
             "status": "success",
             "message": "STNK data saved successfully",
-            "id": stnk_entry.id,
-            "nomor_rangka": stnk_entry.nomor_rangka,
-            "created_at": stnk_entry.created_at
+            "data": {
+                "id": stnk_entry.id,
+                "filename": stnk_entry.file,
+                "nomor_rangka": stnk_entry.nomor_rangka,
+                "jumlah": stnk_entry.jumlah,
+                "created_at": stnk_entry.created_at
+            }
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
-        print(f"Error saving data: {str(e)}")  # Debug log
-        return {
-            "status": "error",
-            "message": f"Error saving data: {str(e)}"
-        }
-    
+        print(f"Error saving data: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error saving data: {str(e)}")
+    finally:
+        db.close()
+
+class UpdateSTNKRequest(BaseModel):
+    nomor_rangka: str
+    jumlah: int
+
+@app.put("/stnk-data/{stnk_id}/update-info/")
+def update_stnk_data_info(
+    stnk_id: int = Path(..., description="ID data STNK yang ingin diperbarui"),
+    payload: UpdateSTNKRequest = ...
+):
+    db: Session = SessionLocal()
+    try:
+        stnk_entry = db.query(STNKData).filter(STNKData.id == stnk_id).first()
+        if not stnk_entry:
+            raise HTTPException(status_code=404, detail="Data STNK tidak ditemukan")
+
+        stnk_entry.nomor_rangka = payload.nomor_rangka
+        stnk_entry.jumlah = payload.jumlah
+
+        db.commit()
+        return {"status": "success", "message": "Data STNK berhasil diperbarui"}
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Gagal memperbarui data: {str(e)}")
+
     finally:
         db.close()
 
