@@ -123,6 +123,241 @@ app.add_middleware(
 
 # # Inisialisasi pipeline OCR sekali saat aplikasi dimulai
 # pipeline = create_pipeline(pipeline="OCR")
+'login'
+from fastapi import FastAPI, HTTPException, Depends
+from app.db.model import User, STNKData, STNKFieldCorrection, stpm_orlap, glbm_samsat, glbm_wilayah_cakupan , glbm_wilayah 
+from app.db.database import engine
+Base.metadata.create_all(bind=engine)
+from app.db.model import RoleEnum  # Ganti path sesuai tempat kamu menyimpan enum-nya
+from app.utils.auth import create_access_token
+from datetime import datetime, timedelta
+from app.middleware.login import LoginMiddleware
+app.add_middleware(LoginMiddleware)
+from app.utils.auth import require_role
+from app.db.database import get_db
+from app.db.model import Role
+from pydantic import BaseModel, EmailStr
+
+
+
+
+
+# Function untuk mengembalikan semua user
+def get_all_users():
+    return users
+
+# Endpoint untuk mengirim hasil function dictionary
+@app.get("/users")
+def read_users(current_user=Depends(require_role(RoleEnum.CAO,RoleEnum.ADMIN, RoleEnum.SUPERADMIN))):
+    return {"data": get_all_users()}
+
+
+@app.get("/roles")
+def get_roles(db: Session = Depends(get_db)):
+    roles = db.query(Role).all()
+    return [{"id": role.id, "name": role.role.value} for role in roles]
+
+
+class LoginData(BaseModel):
+    username: str
+    password: str
+
+def get_all_users():
+    db = SessionLocal()
+    try:
+        users = db.query(User).all()
+        return [{"username": user.username, "role": user.role} for user in users]
+    finally:
+        db.close()
+
+
+@app.post("/login")
+def login(data: LoginData):
+    db: Session = SessionLocal()
+    try:
+        user = db.query(User).filter(User.username == data.username).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User tidak ditemukan")
+        
+        token = create_access_token({"sub" : user.username, "role": user.role.role})
+
+        if user and user.hashed_password == data.password:
+            return {
+                "access_token": token,
+                "token_type": "bearer",
+                "message": "Login berhasil",
+                "user": {
+                    "id": user.id,
+                    "username": user.username,
+                    "role": user.role.role.value
+                }
+            }
+
+        raise HTTPException(status_code=401, detail="Username atau password salah")
+
+    finally:
+        db.close()
+        
+    
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+class RegisterData(BaseModel):
+    username: str
+    gmail: EmailStr
+    password: str
+    role_id: Optional[int] = 1  # default: user
+    nama_lengkap: str
+    nomor_telepon: str
+
+@app.post("/register")
+def register(data: RegisterData, db: Session = Depends(get_db)):
+    # Cek apakah username sudah ada
+    if db.query(User).filter(User.username == data.username).first():
+        raise HTTPException(status_code=400, detail="Username sudah terdaftar")
+
+    # Cek apakah gmail sudah ada
+    if db.query(User).filter(User.gmail == data.gmail).first():
+        raise HTTPException(status_code=400, detail="Gmail sudah terdaftar")
+
+    # Ambil role berdasarkan ID
+    role = db.query(Role).filter(Role.id == data.role_id).first()
+    if not role:
+        raise HTTPException(status_code=404, detail="Role tidak ditemukan")
+
+    # Buat data orlap (nama & nomor telepon)
+    new_orlap = stpm_orlap(
+        nama_lengkap=data.nama_lengkap,
+        nomor_telepon=data.nomor_telepon
+    )
+    db.add(new_orlap)
+    db.commit()
+    db.refresh(new_orlap)
+
+    # Buat user dan hubungkan dengan orlap
+    new_user = User(
+        username=data.username,
+        gmail=data.gmail,
+        hashed_password=data.password,  # ⚠️ hash sebaiknya digunakan di real app
+        role_id=role.id,
+        stpm_orlap_id=new_orlap.id
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    return {
+        "message": "Registrasi berhasil",
+        "user": {
+            "id": new_user.id,
+            "username": new_user.username,
+            "gmail": new_user.gmail,
+            "role": role.role.value,
+            "nama_lengkap": new_orlap.nama_lengkap,
+            "nomor_telepon": new_orlap.nomor_telepon
+        }
+    }
+
+class UpdateUserData(BaseModel):
+    username: Optional[str] = None
+    gmail: Optional[EmailStr] = None
+    password: Optional[str] = None
+    role_id: Optional[int] = None  # ID role baru, jika ingin mengubah
+    nomor_telepon: Optional[str] = None
+    nama_lengkap: Optional[str] = None
+
+@app.put("/update-user/{user_id}")
+def update_user(user_id: int, data: UpdateUserData, db: Session = Depends(get_db), current_user=Depends(require_role(RoleEnum.ADMIN, RoleEnum.SUPERADMIN))):
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User tidak ditemukan")
+
+        # Update fields jika ada
+        if data.username:
+            user.username = data.username
+        if data.gmail:
+            user.gmail = data.gmail
+        if data.password:
+            user.hashed_password = data.password  # ⚠️ hash sebaiknya digunakan di real app
+        if data.role_id:
+            role = db.query(Role).filter(Role.id == data.role_id).first()
+            if not role:
+                raise HTTPException(status_code=404, detail="Role tidak ditemukan")
+            user.role_id = role.id
+        if data.nomor_telepon:
+            user.stpm_orlap.nomor_telepon = data.nomor_telepon
+        if data.nama_lengkap:
+            user.stpm_orlap.nama_lengkap = data.nama_lengkap
+
+        db.commit()
+        db.refresh(user)
+
+        return {
+            "message": "User berhasil diperbarui",
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "gmail": user.gmail,
+                "role": user.role.role.value,
+                "nama_lengkap": user.stpm_orlap.nama_lengkap,
+                "nomor_telepon": user.stpm_orlap.nomor_telepon
+            }
+        }
+    except Exception as e:
+        print("ERROR UPDATE USER:", str(e))
+
+
+@app.delete("/delete-user/{user_id}")
+def delete_user(user_id: int, db: Session = Depends(get_db), current_user=Depends(require_role(RoleEnum.ADMIN, RoleEnum.SUPERADMIN))):
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User tidak ditemukan")
+
+        db.delete(user)
+        db.commit()
+
+        return {"message": "User berhasil dihapus"}
+    except Exception as e:
+        print("ERROR DELETE USER:", str(e))
+
+@app.get ("/glbm-samsat/")
+def get_glbm_samsat(db: Session = Depends(get_db), current_user=Depends(require_role(RoleEnum.CAO, RoleEnum.ADMIN, RoleEnum.SUPERADMIN))):
+    """
+    Endpoint untuk mendapatkan daftar samsat yang ada di database.
+    Hanya dapat diakses oleh user dengan role CAO, ADMIN, atau SUPERADMIN.
+    """
+    try:
+        samsats = db.query(glbm_samsat).all()
+        return {"status": "success", "data": [samsat.as_dict() for samsat in samsats]}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+class AddSamsatRequest(BaseModel):
+    nama_samsat: str
+    kode_samsat: str
+    wilayah_cakupan_id: int  # ID dari glbm_wilayah_cakupan
+
+
+@app.post("/glbm-samsat/")
+def add_glbm_samsat(request: AddSamsatRequest, db: Session = Depends(get_db), current_user=Depends(require_role(RoleEnum.CAO, RoleEnum.ADMIN, RoleEnum.SUPERADMIN))):
+    try:
+        new_glbm_samsat = glbm_samsat(
+            nama_samsat=request.nama_samsat,
+            kode_samsat=request.kode_samsat,
+            wilayah_cakupan_id=request.wilayah_cakupan_id
+        )
+        db.add(new_glbm_samsat)
+        db.commit()
+        return {"status": "success", "data": new_glbm_samsat.as_dict()}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 @app.get("/")
@@ -131,7 +366,7 @@ def read_root():
 
 
 @app.get("/stnk-data/")
-def get_all_stnk_data():
+def get_all_stnk_data(current_user=Depends(require_role(RoleEnum.CAO, RoleEnum.ADMIN, RoleEnum.SUPERADMIN))):
     db = SessionLocal()
     try:
         stnk_entries = db.query(STNKData).all()
@@ -159,7 +394,7 @@ def get_all_stnk_data():
 
 
 @app.get("/stnk-data/with-correction/")
-def get_ktp_data_with_corrections():
+def get_ktp_data_with_corrections(current_user=Depends(require_role(RoleEnum.ADMIN, RoleEnum.SUPERADMIN))):
     db = SessionLocal()
     stnk_entries = db.query(STNKData).all()
     corrected_entries = []
@@ -298,6 +533,7 @@ class STNKDetail(BaseModel):
 class STNKSaveRequest(BaseModel):
     filename: str
     path: str
+    kode_samsat: Optional[str] = None
     nomor_rangka: str
     details: Optional[STNKDetail] = None
 
@@ -343,6 +579,7 @@ async def save_data_stnk(request: STNKSaveRequest):
         stnk_entry = STNKData(
             file=new_filename,
             path=new_path,
+            kode_samsat=request.kode_samsat.strip() if request.kode_samsat else None,
             nomor_rangka=request.nomor_rangka.strip(),
             jumlah=jumlah_value
         )
