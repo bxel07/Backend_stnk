@@ -125,7 +125,7 @@ app.add_middleware(
 # pipeline = create_pipeline(pipeline="OCR")
 'login'
 from fastapi import FastAPI, HTTPException, Depends
-from app.db.model import User, STNKData, STNKFieldCorrection, stpm_orlap, glbm_samsat, glbm_wilayah_cakupan , glbm_wilayah 
+from app.db.model import User, STNKData, STNKFieldCorrection, stpm_orlap, glbm_samsat, glbm_wilayah_cakupan , glbm_wilayah , Detail_otorirasi_samsat, otorirasi_samsat
 from app.db.database import engine
 Base.metadata.create_all(bind=engine)
 from app.db.model import RoleEnum  # Ganti path sesuai tempat kamu menyimpan enum-nya
@@ -137,6 +137,7 @@ from app.utils.auth import require_role
 from app.db.database import get_db
 from app.db.model import Role
 from pydantic import BaseModel, EmailStr
+from sqlalchemy.orm import Session, joinedload
 
 
 
@@ -326,23 +327,47 @@ def delete_user(user_id: int, db: Session = Depends(get_db), current_user=Depend
     except Exception as e:
         print("ERROR DELETE USER:", str(e))
 
-@app.get ("/glbm-samsat/")
-def get_glbm_samsat(db: Session = Depends(get_db), current_user=Depends(require_role(RoleEnum.CAO, RoleEnum.ADMIN, RoleEnum.SUPERADMIN))):
-    """
-    Endpoint untuk mendapatkan daftar samsat yang ada di database.
-    Hanya dapat diakses oleh user dengan role CAO, ADMIN, atau SUPERADMIN.
-    """
+
+from sqlalchemy.orm import joinedload
+
+@app.get("/glbm-samsat/")
+def get_glbm_samsat(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(RoleEnum.CAO, RoleEnum.ADMIN, RoleEnum.SUPERADMIN))
+):
     try:
-        samsats = db.query(glbm_samsat).all()
-        return {"status": "success", "data": [samsat.as_dict() for samsat in samsats]}
+        samsats = db.query(glbm_samsat).options(
+            joinedload(glbm_samsat.wilayah_cakupan).joinedload(glbm_wilayah_cakupan.wilayah)
+        ).all()
+
+        data = []
+        for samsat in samsats:
+            wilayah_cakupan = samsat.wilayah_cakupan
+            wilayah = wilayah_cakupan.wilayah if wilayah_cakupan else None
+
+            data.append({
+                "id": samsat.id,
+                "nama_samsat": samsat.nama_samsat,
+                "kode_samsat": samsat.kode_samsat,
+                "wilayah_cakupan": {
+                    "id": wilayah_cakupan.id if wilayah_cakupan else None,
+                    "nama_wilayah": wilayah_cakupan.nama_wilayah if wilayah_cakupan else None,
+                    "wilayah": wilayah.nama_wilayah if wilayah else None
+                } if wilayah_cakupan else None
+            })
+
+        return {"status": "success", "data": data}
+
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
 
 class AddSamsatRequest(BaseModel):
     nama_samsat: str
     kode_samsat: str
     wilayah_cakupan_id: int  # ID dari glbm_wilayah_cakupan
+
+    class Config:
+        orm_mode = True
 
 
 @app.post("/glbm-samsat/")
@@ -355,10 +380,246 @@ def add_glbm_samsat(request: AddSamsatRequest, db: Session = Depends(get_db), cu
         )
         db.add(new_glbm_samsat)
         db.commit()
-        return {"status": "success", "data": new_glbm_samsat.as_dict()}
+        db.refresh(new_glbm_samsat)
+        return {"status": "success", "data": new_glbm_samsat}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+
+@app.get("/detail-otorirasi-samsat")
+def get_detail_otorirasi_samsat(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(RoleEnum.CAO, RoleEnum.ADMIN, RoleEnum.SUPERADMIN))
+):
+    try:
+        details = db.query(glbm_wilayah_cakupan).options(
+            joinedload(glbm_wilayah_cakupan.detail_otorirasi_samsat),joinedload(glbm_wilayah_cakupan.wilayah)
+        ).all()
+
+        data = []
+        for detail in details:
+            data.append({
+                "wilayah induk" : detail.wilayah.nama_wilayah if detail.wilayah else None,
+                "id_wilayah": detail.id,
+                "nama_wilayah": detail.nama_wilayah,
+                "detail_otorirasi_samsat": [
+                    {
+                        "id": d.id,
+                        "glbm_samsat_id": d.glbm_samsat_id,
+                        "glbm_samsat_nama": d.glbm_samsat.nama_samsat if d.glbm_samsat else None,
+                    } for d in detail.detail_otorirasi_samsat
+                ]
+            })
+
+        return {"status": "success", "data": data}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    
+class AddDetailOtorirasiRequest(BaseModel):
+    glbm_samsat_id: int  # ID dari glbm_samsat
+
+    class Config:
+        orm_mode = True
+
+@app.post("/detail-otorirasi-samsat")
+def add_detail_otorirasi(
+    request: AddDetailOtorirasiRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(RoleEnum.CAO, RoleEnum.ADMIN, RoleEnum.SUPERADMIN))
+):
+    try:
+        # Ambil data samsat
+        samsat = db.query(glbm_samsat).filter(glbm_samsat.id == request.glbm_samsat_id).first()
+        if not samsat:
+            return {"status": "error", "message": "Samsat tidak ditemukan"}
+
+        # Ambil wilayah_cakupan_id langsung dari relasi samsat
+        wilayah_cakupan_id = samsat.wilayah_cakupan_id
+
+        # Buat detail otorisasi
+        new_detail = Detail_otorirasi_samsat(
+            glbm_samsat_id=request.glbm_samsat_id,
+            wilayah_cakupan_id=wilayah_cakupan_id
+        )
+
+        db.add(new_detail)
+        db.commit()
+        db.refresh(new_detail)
+
+        return {
+            "status": "success",
+            "data": {
+                "id": new_detail.id,
+                "glbm_samsat_id": new_detail.glbm_samsat_id,
+                "wilayah_cakupan_id": new_detail.wilayah_cakupan_id
+            }
+        }
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+from sqlalchemy.orm import joinedload
+
+@app.get("/otorirasi-samsat")
+def get_otorirasi_samsat(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(RoleEnum.CAO, RoleEnum.ADMIN, RoleEnum.SUPERADMIN))
+):
+    try:
+        otorisasi_list = db.query(otorirasi_samsat).options(
+            joinedload(otorirasi_samsat.user),
+            joinedload(otorirasi_samsat.detail_otorirasi_samsat)
+                .joinedload(Detail_otorirasi_samsat.glbm_samsat),
+            joinedload(otorirasi_samsat.detail_otorirasi_samsat)
+                .joinedload(Detail_otorirasi_samsat.detail_wilayah_cakupan)
+                .joinedload(glbm_wilayah_cakupan.wilayah)
+        ).all()
+
+        data = []
+        for item in otorisasi_list:
+            detail = item.detail_otorirasi_samsat
+            samsat = detail.glbm_samsat if detail else None
+            wilayah = detail.detail_wilayah_cakupan if detail else None
+            user = item.user
+            wilayah_induk = wilayah.wilayah if wilayah else None
+
+            data.append({
+                "id": item.id,
+                "created_at": item.created_at.isoformat(),
+                "updated_at": item.updated_at.isoformat(),
+                "user_id": user.id if user else None,
+                "username": user.username if user else None,
+                "glbm_samsat_id": samsat.id if samsat else None,
+                "glbm_samsat_nama": samsat.nama_samsat if samsat else None,
+                "wilayah_cakupan_id": wilayah.id if wilayah else None,
+                "wilayah_cakupan_nama": wilayah.nama_wilayah if wilayah else None,
+                "wilayah_induk_nama": wilayah_induk.nama_wilayah if wilayah_induk else None,
+
+            })
+
+        return {"status": "success", "data": data}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+class AddOtorisasiSamsat(BaseModel):
+    user_id: int  # ID dari User yang membuat otorisasi
+    detail_otorirasi_samsat_id: int  # ID dari Detail_otorirasi_samsat
+
+    class Config:
+        orm_mode = True
+
+@app.post("/otorirasi-samsat")
+def add_otorisasi_samsat(
+    request: AddOtorisasiSamsat,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(RoleEnum.CAO, RoleEnum.ADMIN, RoleEnum.SUPERADMIN))
+):
+    try:
+        # Ambil user
+        user = db.query(User).filter(User.id == request.user_id).first()
+        if not user:
+            return {"status": "error", "message": "User tidak ditemukan"}
+
+        # Ambil detail otorisasi samsat
+        detail = db.query(Detail_otorirasi_samsat).filter(Detail_otorirasi_samsat.id == request.detail_otorirasi_samsat_id).first()
+        if not detail:
+            return {"status": "error", "message": "Detail otorisasi samsat tidak ditemukan"}
+
+        # Buat otorisasi samsat baru
+        new_otorisasi = otorirasi_samsat(
+            user_id=request.user_id,
+            detail_otorirasi_samsat_id=request.detail_otorirasi_samsat_id
+        )
+
+        db.add(new_otorisasi)
+        db.commit()
+        db.refresh(new_otorisasi)
+
+        return {
+            "status": "success",
+            "data": {
+                "id": new_otorisasi.id,
+                "user_id": new_otorisasi.user_id,
+                "detail_otorirasi_samsat_id": new_otorisasi.detail_otorirasi_samsat_id
+            }
+        }
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/wilayah")
+def get_wilayah(db: Session = Depends(get_db)):
+    try:
+        wilayah_list = db.query(glbm_wilayah).all()
+        data = []
+        for wilayah in wilayah_list:
+            data.append({
+                "id": wilayah.id,
+                "nama_wilayah": wilayah.nama_wilayah,
+                "cakupan": [
+                    {
+                        "id": cakupan.id,
+                        "nama_wilayah": cakupan.nama_wilayah
+                    } for cakupan in wilayah.wilayah_cakupan
+                ]
+            })
+        return {"status": "success", "data": data}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+class AddWilayahRequest(BaseModel):
+    nama_wilayah: str
+
+    class Config:
+        orm_mode = True
+
+@app.post("/wilayah")
+def add_wilayah(
+    request: AddWilayahRequest,
+    db: Session = Depends(get_db)
+):
+    try:
+        new_wilayah = glbm_wilayah(nama_wilayah=request.nama_wilayah)
+        db.add(new_wilayah)
+        db.commit()
+        db.refresh(new_wilayah)
+        return {"status": "success", "data": new_wilayah}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+class AddWilayahCakupanRequest(BaseModel):
+    nama_wilayah: str
+    wilayah_id: int  # ID dari glbm_wilayah
+
+    class Config:
+        orm_mode = True
+
+@app.post("/wilayah-cakupan")
+def add_wilayah_cakupan(
+    request: AddWilayahCakupanRequest,
+    db: Session = Depends(get_db)
+):
+    try:
+        # Cek apakah wilayah dengan ID tersebut ada
+        wilayah = db.query(glbm_wilayah).filter(glbm_wilayah.id == request.wilayah_id).first()
+        if not wilayah:
+            return {"status": "error", "message": "Wilayah tidak ditemukan"}
+
+        # Buat cakupan wilayah baru
+        new_cakupan = glbm_wilayah_cakupan(
+            nama_wilayah=request.nama_wilayah,
+            wilayah_id=request.wilayah_id
+        )
+
+        db.add(new_cakupan)
+        db.commit()
+        db.refresh(new_cakupan)
+
+        return {"status": "success", "data": new_cakupan}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 @app.get("/")
 def read_root():
@@ -533,20 +794,22 @@ class STNKDetail(BaseModel):
 class STNKSaveRequest(BaseModel):
     filename: str
     path: str
-    kode_samsat: Optional[str] = None
+    user_id: int
+    glbm_samsat_id: int
     nomor_rangka: str
     details: Optional[STNKDetail] = None
 
 @app.post("/save-stnk-data/")
 async def save_data_stnk(request: STNKSaveRequest):
-    db = SessionLocal()
+    db: Session = SessionLocal()
     
     try:
         print(f"Received request: {request}")
         
         if not request.nomor_rangka or request.nomor_rangka.strip() in ["", "-"]:
-            raise HTTPException(status_code=400, detail="Nomor rangka cannot be empty")
+            raise HTTPException(status_code=400, detail="Nomor rangka tidak boleh kosong")
         
+        # Cek apakah nomor rangka sudah ada
         existing = db.query(STNKData).filter(
             STNKData.nomor_rangka == request.nomor_rangka.strip()
         ).first()
@@ -554,15 +817,18 @@ async def save_data_stnk(request: STNKSaveRequest):
         if existing:
             return {
                 "status": "error",
-                "message": "The Frame Number already exists in the database"
+                "message": "Nomor rangka sudah ada di database"
             }
 
-        jumlah_value = request.details.jumlah if request.details else None
-        
-        # Rename file logic
-        old_path = request.path  # Contoh: 'app/storage/batch_abc/stnk1.jpg'
+        # Ambil data samsat untuk ambil kode_samsat
+        samsat = db.query(glbm_samsat).filter(glbm_samsat.id == request.glbm_samsat_id).first()
+        if not samsat:
+            raise HTTPException(status_code=404, detail="Data Samsat tidak ditemukan")
+
+        # Rename file
+        old_path = request.path
         old_dir = os.path.dirname(old_path)
-        ext = os.path.splitext(request.filename)[1]  # Ambil ekstensi (misalnya: .jpg)
+        ext = os.path.splitext(request.filename)[1]
         new_filename = f"{request.nomor_rangka.strip()}{ext}"
         new_path = os.path.join(old_dir, new_filename)
 
@@ -570,16 +836,20 @@ async def save_data_stnk(request: STNKSaveRequest):
             os.rename(old_path, new_path)
             print(f"File renamed from {old_path} to {new_path}")
         except FileNotFoundError:
-            print(f"[WARNING] File tidak ditemukan untuk rename: {old_path}")
+            print(f"[WARNING] File tidak ditemukan: {old_path}")
         except Exception as e:
-            print(f"[ERROR] Rename file gagal: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Gagal mengganti nama file: {e}")
 
-        # Simpan ke database dengan nama file baru
+        # Ambil jumlah dari detail (jika ada)
+        jumlah_value = request.details.jumlah if request.details else None
+
+        # Simpan ke database
         stnk_entry = STNKData(
             file=new_filename,
             path=new_path,
-            kode_samsat=request.kode_samsat.strip() if request.kode_samsat else None,
+            user_id=request.user_id,
+            glbm_samsat_id=request.glbm_samsat_id,
+            kode_samsat=samsat.kode_samsat,
             nomor_rangka=request.nomor_rangka.strip(),
             jumlah=jumlah_value
         )
@@ -590,12 +860,15 @@ async def save_data_stnk(request: STNKSaveRequest):
 
         return {
             "status": "success",
-            "message": "STNK data saved successfully",
+            "message": "STNK data berhasil disimpan",
             "data": {
                 "id": stnk_entry.id,
                 "filename": stnk_entry.file,
                 "nomor_rangka": stnk_entry.nomor_rangka,
                 "jumlah": stnk_entry.jumlah,
+                "kode_samsat": stnk_entry.kode_samsat,
+                "user_id": stnk_entry.user_id,
+                "glbm_samsat_id": stnk_entry.glbm_samsat_id,
                 "created_at": stnk_entry.created_at
             }
         }
@@ -615,8 +888,8 @@ class UpdateSTNKRequest(BaseModel):
 
 @app.put("/stnk-data/{stnk_id}/update-info/")
 def update_stnk_data_info(
-    stnk_id: int = Path(..., description="ID data STNK yang ingin diperbarui"),
-    payload: UpdateSTNKRequest = ...
+    stnk_id: int = Path(..., description="ID data STNK yang ingin diperbarui"),current_user=Depends(require_role(RoleEnum.ADMIN, RoleEnum.SUPERADMIN)),
+    payload: UpdateSTNKRequest = ... 
 ):
     db: Session = SessionLocal()
     try:

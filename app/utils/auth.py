@@ -7,20 +7,17 @@ from fastapi.security import OAuth2PasswordBearer
 # Konfigurasi JWT
 SECRET_KEY = "STNK_RAHASIA"
 ALGORITHM = "HS256"
-EXPIRE_TOKEN = 60 * 24 * 7  # 7 hari
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 # Buat token
-def create_access_token(data: dict, expires_delta: timedelta = None):
+def create_access_token(data: dict):
     to_encode = data.copy()
     
     # Jika role adalah Enum, ubah ke .value agar bisa diserialisasi JSON
     if "role" in to_encode and isinstance(to_encode["role"], Enum):
         to_encode["role"] = to_encode["role"].value
 
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=EXPIRE_TOKEN))
-    to_encode.update({"exp": expire})
     
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt

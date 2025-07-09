@@ -1,13 +1,21 @@
 from app.db.database import Base, engine
+from sqlalchemy import text
 
-# 🧠 PENTING: import semua model di sini
-from app.db.model import User
-from app.db.model import stpm_orlap
-from app.db.model import Role
-from app.db.model import STNKData, STNKFieldCorrection
+# Import semua model agar metadata lengkap
+from app.db.model import (
+    User, stpm_orlap, Role,
+    STNKData, STNKFieldCorrection,
+    glbm_wilayah_cakupan, glbm_wilayah,
+    glbm_samsat, otorirasi_samsat, Detail_otorirasi_samsat
+)
 
 def reset_database():
-    Base.metadata.drop_all(bind=engine)
+    with engine.connect() as conn:
+        # Nonaktifkan constraint check dan drop semua tabel dengan CASCADE
+        conn.execute(text("DROP SCHEMA public CASCADE;"))
+        conn.execute(text("CREATE SCHEMA public;"))
+        conn.commit()
+
     Base.metadata.create_all(bind=engine)
 
 if __name__ == "__main__":

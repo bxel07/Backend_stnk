@@ -7,12 +7,10 @@ db = SessionLocal()
 # Buat data wilayah
 wilayah1 = glbm_wilayah(
     nama_wilayah="Jakarta Selatan",
-    kode_wilayah="JKT-SL"
 )
 
 wilayah2 = glbm_wilayah(
     nama_wilayah="Bandung",
-    kode_wilayah="BDG"
 )
 
 # Commit wilayah terlebih dahulu untuk mendapatkan ID-nya
