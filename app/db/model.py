@@ -49,6 +49,38 @@ class RoleEnum(enum.Enum):
     ADMIN = "admin"
     SUPERADMIN = "superadmin"
 
+class kode_samsat(enum.Enum):
+    UTR = "UTR"
+    BSD = "BSD"
+    TMR = "TMR"
+    BLR = "BLR"
+    PST = "PST"
+    SLT = "SLT"
+    CPT = "CPT"
+    BKS = "BKS"
+    CLG = "CLG"
+    DPK = "DPK"
+    CKR = "CKR"
+    BRT = "BRT"
+    CKL = "CKL"
+    CNR = "CNR"
+
+
+class Kode_Dealer(Enum):
+    HDS = "HDS"
+    DTC = "DTC"
+    TKL = "TKL"
+    TJW = "TJW"
+    TBT = "TBT"
+    TRI = "TRI"
+    TCN = "TCN"
+    TCS = "TCS"
+    TMP = "TMP"
+    TTG = "TTG"
+    TLM = "TLM"
+    TDS = "TDS"
+
+
 class Role(Base):
     __tablename__ = "roles"
 
