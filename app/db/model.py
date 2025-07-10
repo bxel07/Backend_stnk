@@ -44,6 +44,7 @@ class STNKFieldCorrection(Base):
 
 class RoleEnum(enum.Enum):
     USER = "user"
+    ORLAP = "orlap"
     CAO = "cao"
     ADMIN = "admin"
     SUPERADMIN = "superadmin"

@@ -6,7 +6,7 @@ from app.utils.auth import verify_access_token
 class LoginMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         
-        public_paths = ["/login", "/register", "/docs", "/openapi.json"]
+        public_paths = ["/login", "/docs", "/openapi.json"]
 
         # Lewati middleware jika path termasuk dalam public_paths
         if any(request.url.path.startswith(path) for path in public_paths):

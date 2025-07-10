@@ -8,7 +8,7 @@ from fastapi.security import OAuth2PasswordBearer
 SECRET_KEY = "STNK_RAHASIA"
 ALGORITHM = "HS256"
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login", auto_error=False)
 
 # Buat token
 def create_access_token(data: dict):
@@ -32,6 +32,11 @@ def verify_access_token(token: str):
 
 # Ambil current user dari token
 def get_current_user(token: str = Depends(oauth2_scheme)):
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token tidak ditemukan",
+        )
     payload = verify_access_token(token)
     if payload is None:
         raise HTTPException(
