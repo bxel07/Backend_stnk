@@ -11,7 +11,7 @@ JAKARTA_TZ = timezone(timedelta(hours=7))
 
 class STNKData(Base):
     __tablename__ = "stnk_data"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     glbm_samsat_id = Column(Integer, ForeignKey("glbm_samsat.id"), nullable=False)
@@ -22,20 +22,15 @@ class STNKData(Base):
     jumlah = Column(Integer, nullable=True)
     corrected = Column(Boolean, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(JAKARTA_TZ), nullable=False)
-    updated_at = Column(DateTime, default=lambda: datetime.now(JAKARTA_TZ),
-                        onupdate=lambda: datetime.now(JAKARTA_TZ), nullable=False)
-    
-    corrections = relationship(
-        "STNKFieldCorrection",
-        back_populates="stnk_data",
-        cascade="all, delete-orphan"
-    )
+    updated_at = Column(DateTime, default=lambda: datetime.now(JAKARTA_TZ), onupdate=lambda: datetime.now(JAKARTA_TZ), nullable=False)
+
+    corrections = relationship("STNKFieldCorrection", back_populates="stnk_data", cascade="all, delete-orphan")
     user = relationship("User", back_populates="stnk_data")
     glbm_samsat = relationship("glbm_samsat", back_populates="stnk_data")
 
 class STNKFieldCorrection(Base):
     __tablename__ = "stnk_field_corrections"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     stnk_data_id = Column(Integer, ForeignKey("stnk_data.id"), nullable=False)
     field_name = Column(String, nullable=False)
@@ -57,11 +52,7 @@ class Role(Base):
     __tablename__ = "roles"
 
     id = Column(Integer, primary_key=True, index=True)
-    role = Column(
-        Enum(RoleEnum, native_enum=False, values_callable=lambda x: [e.value for e in x]),
-        default=RoleEnum.USER.value,
-        nullable=False
-    )
+    role = Column(Enum(RoleEnum, native_enum=False, values_callable=lambda x: [e.value for e in x]), default=RoleEnum.USER.value, nullable=False)
 
     users = relationship("User", back_populates="role")
 
@@ -78,7 +69,7 @@ class stpm_orlap(Base):
 
 class User(Base):
     __tablename__ = "users"
- 
+
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, nullable=False)
     gmail = Column(String, unique=True, nullable=False)
@@ -99,6 +90,8 @@ class glbm_wilayah(Base):
     id = Column(Integer, primary_key=True, index=True)
     nama_wilayah = Column(String, nullable=False)
 
+    samsats = relationship("glbm_samsat", back_populates="wilayah", cascade="all, delete-orphan")
+    detail_otorirasi_samsat = relationship("Detail_otorirasi_samsat", back_populates="wilayah", cascade="all, delete-orphan")
     wilayah_cakupan = relationship("glbm_wilayah_cakupan", back_populates="wilayah", cascade="all, delete-orphan")
 
 class glbm_wilayah_cakupan(Base):
@@ -112,7 +105,6 @@ class glbm_wilayah_cakupan(Base):
     samsats = relationship("glbm_samsat", back_populates="wilayah_cakupan")
     detail_otorirasi_samsat = relationship("Detail_otorirasi_samsat", back_populates="detail_wilayah_cakupan")
 
-
 # ========================= Samsat ==============================
 
 class glbm_samsat(Base):
@@ -122,6 +114,9 @@ class glbm_samsat(Base):
     nama_samsat = Column(String, nullable=False)
     kode_samsat = Column(String, nullable=False)
     wilayah_cakupan_id = Column(Integer, ForeignKey("glbm_wilayah_cakupan.id"), nullable=False)
+    wilayah_id = Column(Integer, ForeignKey("glbm_wilayah.id"), nullable=False)
+
+    wilayah = relationship("glbm_wilayah", back_populates="samsats")
     wilayah_cakupan = relationship("glbm_wilayah_cakupan", back_populates="samsats")
     detail_otorirasi_samsat = relationship("Detail_otorirasi_samsat", back_populates="glbm_samsat")
     stnk_data = relationship("STNKData", back_populates="glbm_samsat", cascade="all, delete-orphan")
@@ -134,18 +129,18 @@ class glbm_samsat(Base):
             "wilayah_cakupan_id": self.wilayah_cakupan_id
         }
 
-
 class Detail_otorirasi_samsat(Base):
     __tablename__ = "detail_otorirasi_samsat"
 
     id = Column(Integer, primary_key=True, index=True)
     glbm_samsat_id = Column(Integer, ForeignKey("glbm_samsat.id"), nullable=False)
     wilayah_cakupan_id = Column(Integer, ForeignKey("glbm_wilayah_cakupan.id"), nullable=False)
+    wilayah_id = Column(Integer, ForeignKey("glbm_wilayah.id"), nullable=False)
 
+    wilayah = relationship("glbm_wilayah", back_populates="detail_otorirasi_samsat")
     detail_wilayah_cakupan = relationship("glbm_wilayah_cakupan", back_populates="detail_otorirasi_samsat")
-    otorirasi_samsat = relationship("otorirasi_samsat", back_populates="detail_otorirasi_samsat")
     glbm_samsat = relationship("glbm_samsat", back_populates="detail_otorirasi_samsat")
-
+    otorirasi_samsat = relationship("otorirasi_samsat", back_populates="detail_otorirasi_samsat")
 
 # ========================= Otorisasi ==============================
 
@@ -160,4 +155,3 @@ class otorirasi_samsat(Base):
 
     detail_otorirasi_samsat = relationship("Detail_otorirasi_samsat", back_populates="otorirasi_samsat")
     user = relationship("User", back_populates="otorirasi_samsat")
-

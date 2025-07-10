@@ -1,3 +1,7 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from app.db.model import glbm_wilayah, glbm_wilayah_cakupan
 from app.db.database import SessionLocal
 
