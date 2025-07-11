@@ -144,7 +144,12 @@ from app.utils.auth import get_current_user
 
 # Function untuk mengembalikan semua user
 def get_all_users():
-    return users
+    db = SessionLocal()
+    try:
+        users = db.query(User).all()
+        return [{"username": user.username, "role": user.role} for user in users, "gmail": user.gmail]
+    finally:
+        db.close()
 
 # Endpoint untuk mengirim hasil function dictionary
 @app.get("/users")
@@ -162,13 +167,7 @@ class LoginData(BaseModel):
     username: str
     password: str
 
-def get_all_users():
-    db = SessionLocal()
-    try:
-        users = db.query(User).all()
-        return [{"username": user.username, "role": user.role} for user in users]
-    finally:
-        db.close()
+
 
 
 @app.post("/login")
