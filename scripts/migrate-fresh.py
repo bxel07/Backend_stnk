@@ -11,7 +11,7 @@ from app.db.model import (
     User, stpm_orlap, Role,
     STNKData, STNKFieldCorrection,
     glbm_wilayah_cakupan, glbm_wilayah,
-    glbm_samsat, otorirasi_samsat, Detail_otorirasi_samsat
+    glbm_samsat, otorirasi_samsat, Detail_otorirasi_samsat,glbm_brand, glbm_pt,
 )
 
 def reset_database():

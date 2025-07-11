@@ -20,6 +20,8 @@ class STNKData(Base):
     nomor_rangka = Column(String, nullable=True)
     kode_samsat = Column(String, nullable=True)
     jumlah = Column(Integer, nullable=True)
+    nama_pt = Column(String, nullable=True)
+    nama_brand = Column(String, nullable=True)
     corrected = Column(Boolean, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(JAKARTA_TZ), nullable=False)
     updated_at = Column(DateTime, default=lambda: datetime.now(JAKARTA_TZ), onupdate=lambda: datetime.now(JAKARTA_TZ), nullable=False)
@@ -130,6 +132,8 @@ class glbm_samsat(Base):
             "wilayah_cakupan_id": self.wilayah_cakupan_id
         }
 
+# ========================= Detail Otorisasi ==============================
+
 class Detail_otorirasi_samsat(Base):
     __tablename__ = "detail_otorirasi_samsat"
 
@@ -137,11 +141,15 @@ class Detail_otorirasi_samsat(Base):
     glbm_samsat_id = Column(Integer, ForeignKey("glbm_samsat.id"), nullable=False)
     wilayah_cakupan_id = Column(Integer, ForeignKey("glbm_wilayah_cakupan.id"), nullable=False)
     wilayah_id = Column(Integer, ForeignKey("glbm_wilayah.id"), nullable=False)
+    glbm_brand_id = Column(Integer, ForeignKey("glbm_brand.id"), nullable=False)
+    glbm_pt_id = Column(Integer, ForeignKey("glbm_pt.id"), nullable=False)
 
     wilayah = relationship("glbm_wilayah", back_populates="detail_otorirasi_samsat")
     detail_wilayah_cakupan = relationship("glbm_wilayah_cakupan", back_populates="detail_otorirasi_samsat")
     glbm_samsat = relationship("glbm_samsat", back_populates="detail_otorirasi_samsat")
     otorirasi_samsat = relationship("otorirasi_samsat", back_populates="detail_otorirasi_samsat")
+    glbm_brand = relationship("glbm_brand", back_populates="detail_otorirasi_samsat")
+    glbm_pt = relationship("glbm_pt", back_populates="detail_otorirasi_samsat")
 
 # ========================= Otorisasi ==============================
 
@@ -157,6 +165,8 @@ class otorirasi_samsat(Base):
     detail_otorirasi_samsat = relationship("Detail_otorirasi_samsat", back_populates="otorirasi_samsat")
     user = relationship("User", back_populates="otorirasi_samsat")
 
+# ========================= Brand & PT ==============================
+
 class glbm_brand(Base):
     __tablename__ = "glbm_brand"
 
@@ -164,9 +174,13 @@ class glbm_brand(Base):
     nama_brand = Column(String, nullable=False)
     kode_brand = Column(String, nullable=False)
 
-class glbm_ptp(Base):
-    __tablename__ = "glbm_ptp"
+    detail_otorirasi_samsat = relationship("Detail_otorirasi_samsat", back_populates="glbm_brand")
+
+class glbm_pt(Base):
+    __tablename__ = "glbm_pt"
 
     id = Column(Integer, primary_key=True, index=True)
-    nama_ptp = Column(String, nullable=False)
-    kode_ptp = Column(String, nullable=False)
+    nama_pt = Column(String, nullable=False)
+    kode_pt = Column(String, nullable=False)
+
+    detail_otorirasi_samsat = relationship("Detail_otorirasi_samsat", back_populates="glbm_pt")
