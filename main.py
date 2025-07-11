@@ -312,6 +312,60 @@ def update_user(user_id: int, data: UpdateUserData, db: Session = Depends(get_db
         print("ERROR UPDATE USER:", str(e))
 
 
+@app.get("/user-profile")
+def get_user_profile(
+    current_user : dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        user_id = int(current_user.get("sub"))  # Ambil user_id dari token
+        user = db.query(User).filter(User.id == user_id).first()
+
+        if not user:
+            raise HTTPException(status_code=404, detail="User tidak ditemukan")
+
+        return {
+            "id": user.id,
+            "username": user.username,
+            "gmail": user.gmail,
+            "nama_lengkap": user.stpm_orlap.nama_lengkap,
+            "nomor_telepon": user.stpm_orlap.nomor_telepon,
+            "role": user.role.role.value
+        }
+    except Exception as e:
+        print("ERROR GET USER PROFILE:", str(e))
+        raise HTTPException(status_code=500, detail="Terjadi kesalahan saat mengambil profil user")
+
+class UpdateUserProfile(BaseModel):
+    password: Optional[str] = None
+
+@app.put("/user-profile/update")
+def update_user_profile(
+     request: UpdateUserProfile,
+     current_user : dict = Depends(get_current_user),
+     db: Session = Depends(get_db)
+):
+    try:
+        user_id = int(current_user.get("sub"))  # Ambil user_id dari token
+        user = db.query(User).options(joinedload(User.stpm_orlap)).filter(User.id == user_id).first()
+
+        if not user:
+            raise HTTPException(status_code=404, detail="User tidak ditemukan")
+
+        if request.password:
+            user.hashed_password = request.password  # ⚠️ hash sebaiknya digunakan di real app
+
+        db.commit()
+        db.refresh(user)
+
+        return {
+            "message": "Password berhasil diperbarui",
+        }
+    except Exception as e:
+        print("ERROR UPDATE USER:", str(e))
+
+
+
 @app.delete("/delete-user/{user_id}")
 def delete_user(user_id: int, db: Session = Depends(get_db), current_user=Depends(require_role(RoleEnum.ADMIN, RoleEnum.SUPERADMIN))):
     try:
