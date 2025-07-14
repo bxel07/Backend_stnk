@@ -251,8 +251,36 @@ class RegisterData(BaseModel):
     glbm_pt_id: int
     glbm_samsat_id: int
 
+
 @app.post("/register")
 def register(data: RegisterData, db: Session = Depends(get_db)):
+    # Validasi awal: field wajib
+    missing_fields = []
+    if not data.username:
+        missing_fields.append("username")
+    if not data.gmail:
+        missing_fields.append("gmail")
+    if not data.password:
+        missing_fields.append("password")
+    if not data.role_id:
+        missing_fields.append("role_id")
+    if not data.nama_lengkap:
+        missing_fields.append("nama_lengkap")
+    if not data.nomor_telepon:
+        missing_fields.append("nomor_telepon")
+    if not data.glbm_samsat_id:
+        missing_fields.append("glbm_samsat_id")
+    if not data.glbm_pt_id:
+        missing_fields.append("glbm_pt_id")
+    if not data.glbm_brand_ids or len(data.glbm_brand_ids) == 0:
+        missing_fields.append("glbm_brand_ids")
+
+    if missing_fields:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Field berikut wajib diisi: {', '.join(missing_fields)}"
+        )
+
     # Cek username & gmail
     if db.query(User).filter(User.username == data.username).first():
         raise HTTPException(status_code=400, detail="Username sudah terdaftar")
@@ -264,27 +292,6 @@ def register(data: RegisterData, db: Session = Depends(get_db)):
     if not role:
         raise HTTPException(status_code=404, detail="Role tidak ditemukan")
 
-    # Buat orlap
-    new_orlap = stpm_orlap(
-        nama_lengkap=data.nama_lengkap,
-        nomor_telepon=data.nomor_telepon
-    )
-    db.add(new_orlap)
-    db.commit()
-    db.refresh(new_orlap)
-
-    # Buat user
-    new_user = User(
-        username=data.username,
-        gmail=data.gmail,
-        hashed_password=data.password,
-        role_id=role.id,
-        stpm_orlap_id=new_orlap.id
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-
     # Validasi samsat
     samsat = db.query(glbm_samsat).filter(glbm_samsat.id == data.glbm_samsat_id).first()
     if not samsat:
@@ -293,50 +300,71 @@ def register(data: RegisterData, db: Session = Depends(get_db)):
     wilayah_cakupan_id = samsat.wilayah_cakupan_id
     wilayah_id = samsat.wilayah_id
 
-    otorisasi_list = []
-
-    for brand_id in data.glbm_brand_ids:
-        # Buat detail otorisasi untuk setiap brand
-        detail = Detail_otorirasi_samsat(
-            glbm_samsat_id=data.glbm_samsat_id,
-            glbm_brand_id=brand_id,
-            glbm_pt_id=data.glbm_pt_id,
-            wilayah_cakupan_id=wilayah_cakupan_id,
-            wilayah_id=wilayah_id
+    # Mulai transaksi DB
+    try:
+        # Buat orlap
+        new_orlap = stpm_orlap(
+            nama_lengkap=data.nama_lengkap,
+            nomor_telepon=data.nomor_telepon
         )
-        db.add(detail)
-        db.commit()
-        db.refresh(detail)
+        db.add(new_orlap)
+        db.flush()  # gunakan flush untuk dapat ID tanpa commit
 
-        # Hubungkan user ke detail otorisasi
-        otorisasi = otorirasi_samsat(
-            user_id=new_user.id,
-            detail_otorirasi_samsat_id=detail.id
+        # Buat user
+        new_user = User(
+            username=data.username,
+            gmail=data.gmail,
+            hashed_password=data.password,
+            role_id=role.id,
+            stpm_orlap_id=new_orlap.id
         )
-        db.add(otorisasi)
+        db.add(new_user)
+        db.flush()
+
+        otorisasi_list = []
+        for brand_id in data.glbm_brand_ids:
+            detail = Detail_otorirasi_samsat(
+                glbm_samsat_id=data.glbm_samsat_id,
+                glbm_brand_id=brand_id,
+                glbm_pt_id=data.glbm_pt_id,
+                wilayah_cakupan_id=wilayah_cakupan_id,
+                wilayah_id=wilayah_id
+            )
+            db.add(detail)
+            db.flush()
+
+            otorisasi = otorirasi_samsat(
+                user_id=new_user.id,
+                detail_otorirasi_samsat_id=detail.id
+            )
+            db.add(otorisasi)
+            db.flush()
+
+            otorisasi_list.append({
+                "detail_otorirasi_samsat_id": detail.id,
+                "glbm_samsat_id": data.glbm_samsat_id,
+                "glbm_brand_id": brand_id,
+                "glbm_pt_id": data.glbm_pt_id
+            })
+
         db.commit()
-        db.refresh(otorisasi)
 
-        otorisasi_list.append({
-            "detail_otorirasi_samsat_id": detail.id,
-            "glbm_samsat_id": data.glbm_samsat_id,
-            "glbm_brand_id": brand_id,
-            "glbm_pt_id": data.glbm_pt_id
-        })
+        return {
+            "message": "Registrasi dan Otorisasi berhasil",
+            "user": {
+                "id": new_user.id,
+                "username": new_user.username,
+                "gmail": new_user.gmail,
+                "role": role.role.value,
+                "nama_lengkap": new_orlap.nama_lengkap,
+                "nomor_telepon": new_orlap.nomor_telepon
+            },
+            "otorisasi": otorisasi_list
+        }
 
-    return {
-        "message": "Registrasi dan Otorisasi berhasil",
-        "user": {
-            "id": new_user.id,
-            "username": new_user.username,
-            "gmail": new_user.gmail,
-            "role": role.role.value,
-            "nama_lengkap": new_orlap.nama_lengkap,
-            "nomor_telepon": new_orlap.nomor_telepon
-        },
-        "otorisasi": otorisasi_list
-    }
-
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Registrasi gagal: {str(e)}")
 
 class OtorisasiItem(BaseModel):
     brand_id: int
