@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, ForeignKey, DateTime, Text, Enum
+from sqlalchemy import Boolean, Column, Integer, String, ForeignKey, DateTime, Text, Enum,Date
 from sqlalchemy.orm import relationship
 from datetime import datetime, timedelta, timezone
 from app.db.database import Base
@@ -14,7 +14,7 @@ class STNKData(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    glbm_samsat_id = Column(Integer, ForeignKey("glbm_samsat.id"), nullable=False)
+    glbm_samsat_id = Column(Integer, ForeignKey("glbm_samsat.id"), nullable=True)
     file = Column(String, nullable=True)
     path = Column(String, nullable=True)
     nomor_rangka = Column(String, nullable=True)
@@ -184,3 +184,25 @@ class glbm_pt(Base):
     kode_pt = Column(String, nullable=False)
 
     detail_otorirasi_samsat = relationship("Detail_otorirasi_samsat", back_populates="glbm_pt")
+
+class master_excel(Base):
+    __tablename__ = "master_excel"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    norangka = Column(String)
+    nama_stnk = Column(String)
+    kode_tipe = Column(String)
+    tipe = Column(String)
+    kode_model = Column(String)
+    model = Column(String)
+    merk = Column(String)
+    kode_samsat = Column(String)
+    samsat = Column(String)
+    kode_dealer = Column(String)
+    nama_dealer = Column(String)
+    kode_group = Column(String)
+    group_perusahaan = Column(String)
+    tgl_mohon_stnk = Column(Date)
+    tgl_simpan = Column(Date)
+    nama_pt = Column(String)
+    kode_cabang = Column(String)
