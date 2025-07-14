@@ -148,14 +148,40 @@ def get_all_users():
     db = SessionLocal()
     try:
         users = db.query(User).all()
-        return [
-            {
+        result = []
+
+        for user in users:
+            user_data = {
                 "username": user.username,
+                "gmail": user.gmail,
                 "role": user.role.role if user.role else None,
-                "gmail": user.gmail
+                "otorisasi": []
             }
-            for user in users
-        ]
+
+            # Ambil semua otorisasi user
+            otorisasi_list = db.query(otorirasi_samsat).filter(
+                otorirasi_samsat.user_id == user.id
+            ).all()
+
+            for otor in otorisasi_list:
+                detail = db.query(Detail_otorirasi_samsat).filter(
+                    Detail_otorirasi_samsat.id == otor.detail_otorirasi_samsat_id
+                ).first()
+
+                if not detail:
+                    continue
+
+                user_data["otorisasi"].append({
+                    "brand_id": detail.glbm_brand_id,
+                    "pt_id": detail.glbm_pt_id,
+                    "samsat_id": detail.glbm_samsat_id,
+                    "wilayah_id": detail.wilayah_id,
+                    "wilayah_cakupan_id": detail.wilayah_cakupan_id
+                })
+
+            result.append(user_data)
+
+        return result
     finally:
         db.close()
 
@@ -312,55 +338,77 @@ def register(data: RegisterData, db: Session = Depends(get_db)):
     }
 
 
+class OtorisasiItem(BaseModel):
+    brand_id: int
+    pt_id: int
+
 class UpdateUserData(BaseModel):
     username: Optional[str] = None
     gmail: Optional[EmailStr] = None
-    password: Optional[str] = None
-    role_id: Optional[int] = None  # ID role baru, jika ingin mengubah
-    nomor_telepon: Optional[str] = None
-    nama_lengkap: Optional[str] = None
+    role_id: Optional[int] = None
+    otorisasi: Optional[List[OtorisasiItem]] = None
 
 @app.put("/update-user/{user_id}")
-def update_user(user_id: int, data: UpdateUserData, db: Session = Depends(get_db), current_user=Depends(require_role(RoleEnum.ADMIN, RoleEnum.SUPERADMIN))):
+def update_user(
+    user_id: int,
+    data: UpdateUserData,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(RoleEnum.ADMIN, RoleEnum.SUPERADMIN))
+):
     try:
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="User tidak ditemukan")
 
-        # Update fields jika ada
+        # === Update data user umum ===
         if data.username:
             user.username = data.username
         if data.gmail:
             user.gmail = data.gmail
-        if data.password:
-            user.hashed_password = data.password  # ⚠️ hash sebaiknya digunakan di real app
         if data.role_id:
             role = db.query(Role).filter(Role.id == data.role_id).first()
             if not role:
                 raise HTTPException(status_code=404, detail="Role tidak ditemukan")
             user.role_id = role.id
-        if data.nomor_telepon:
-            user.stpm_orlap.nomor_telepon = data.nomor_telepon
-        if data.nama_lengkap:
-            user.stpm_orlap.nama_lengkap = data.nama_lengkap
+
+        # === Update Otorisasi: brand & pt ===
+        if data.otorisasi:
+            otorisasi_list = db.query(otorirasi_samsat).filter(
+                otorirasi_samsat.user_id == user.id
+            ).all()
+
+            for i, otor in enumerate(otorisasi_list):
+                detail = db.query(Detail_otorirasi_samsat).filter(
+                    Detail_otorirasi_samsat.id == otor.detail_otorirasi_samsat_id
+                ).first()
+
+                if not detail or i >= len(data.otorisasi):
+                    continue
+
+                otor_data = data.otorisasi[i]
+
+                detail.glbm_brand_id = otor_data.brand_id
+                detail.glbm_pt_id = otor_data.pt_id
+
+                db.add(detail)
 
         db.commit()
         db.refresh(user)
 
         return {
-            "message": "User berhasil diperbarui",
+            "message": "User dan detail otorisasi berhasil diperbarui",
             "user": {
                 "id": user.id,
                 "username": user.username,
                 "gmail": user.gmail,
-                "role": user.role.role.value,
-                "nama_lengkap": user.stpm_orlap.nama_lengkap,
-                "nomor_telepon": user.stpm_orlap.nomor_telepon
+                "role": user.role.role.value
             }
         }
-    except Exception as e:
-        print("ERROR UPDATE USER:", str(e))
 
+    except Exception as e:
+        db.rollback()
+        print("ERROR UPDATE USER:", str(e))
+        raise HTTPException(status_code=500, detail="Terjadi kesalahan saat memperbarui user")
 
 @app.get("/user-profile")
 def get_user_profile(
