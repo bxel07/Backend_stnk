@@ -12,10 +12,12 @@ class LoginMiddleware(BaseHTTPMiddleware):
         public_paths = [
             "/login", "/register",
             "/docs", "/redoc", "/openapi.json",
-            "/api/docs", "/api/openapi.json"
+            "/api/docs", "/api/openapi.json",
+            "/storage/"
         ]
 
-        if request.url.path in public_paths:
+        # Gunakan startswith agar bisa akses file seperti /storage/foto.jpg
+        if any(request.url.path.startswith(path) for path in public_paths):
             return await call_next(request)
 
         auth_header = request.headers.get("Authorization")
@@ -32,10 +34,6 @@ class LoginMiddleware(BaseHTTPMiddleware):
                 status_code=401,
                 content={"detail": "Invalid or expired token"}
             )
-
-        request.state.user = payload
-        return await call_next(request)
-
 
         request.state.user = payload
         return await call_next(request)
