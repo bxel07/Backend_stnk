@@ -137,6 +137,7 @@ from app.db.database import get_db
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session, joinedload
 from app.utils.auth import get_current_user 
+import pandas as pd
 
 
 
@@ -508,7 +509,7 @@ def get_detail_otorirasi_samsat(
 
 class AddDetailOtorirasiRequest(BaseModel):
     glbm_samsat_id: int  # ID dari glbm_samsat
-    glbm_brand_id: int  # ID dari glbm_brand, jika ada
+    glbm_brand_ids: List[int]  # ID dari glbm_brand, jika ada
     glbm_pt_id: int  # ID dari glbm_pt, jika ada
 
     class Config:
@@ -518,47 +519,77 @@ class AddDetailOtorirasiRequest(BaseModel):
 def add_detail_otorirasi(
     request: AddDetailOtorirasiRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(RoleEnum.CAO, RoleEnum.ADMIN, RoleEnum.SUPERADMIN))
+    current_user=Depends(require_role(
+        RoleEnum.USER, RoleEnum.CAO, RoleEnum.ADMIN, RoleEnum.SUPERADMIN
+    ))
 ):
     try:
-        # Ambil data samsat berdasarkan ID
+        sub = current_user["sub"]
+        if sub.isdigit():
+            user = db.query(User).filter(User.id == int(sub)).first()
+        else:
+            user = db.query(User).filter(User.username == sub).first()
+
+        if not user:
+            raise HTTPException(status_code=404, detail="User tidak ditemukan")
+
+
         samsat = db.query(glbm_samsat).filter(glbm_samsat.id == request.glbm_samsat_id).first()
         if not samsat:
             return {"status": "error", "message": "Samsat tidak ditemukan"}
 
-        # Ambil wilayah_cakupan_id dan wilayah_id langsung dari relasi samsat
         wilayah_cakupan_id = samsat.wilayah_cakupan_id
         wilayah_id = samsat.wilayah_id
 
-        # Buat data detail otorisasi samsat
-        new_detail = Detail_otorirasi_samsat(
-            glbm_samsat_id=request.glbm_samsat_id,
-            glbm_brand_id=request.glbm_brand_id if request.glbm_brand_id else None,
-            glbm_pt_id=request.glbm_pt_id if request.glbm_pt_id else None,
-            wilayah_cakupan_id=wilayah_cakupan_id,
-            wilayah_id=wilayah_id
-        )
+        # Role USER hanya boleh punya satu brand
+        if user.role.role == RoleEnum.USER.value:
+            existing_otorisasi = db.query(otorirasi_samsat).join(Detail_otorirasi_samsat).filter(
+                otorirasi_samsat.user_id == user.id
+            ).all()
+            existing_brand_ids = {
+                o.detail_otorirasi_samsat.glbm_brand_id
+                for o in existing_otorisasi
+                if o.detail_otorirasi_samsat.glbm_brand_id is not None
+            }
 
-        db.add(new_detail)
-        db.commit()
-        db.refresh(new_detail)
+            for brand_id in request.glbm_brand_ids:
+                if existing_brand_ids and brand_id not in existing_brand_ids:
+                    return {
+                        "status": "error",
+                        "message": "Role USER hanya boleh memiliki satu brand"
+                    }
 
-        return {
-            "status": "success",
-            "data": {
+        result = []
+
+        for brand_id in request.glbm_brand_ids:
+            new_detail = Detail_otorirasi_samsat(
+                glbm_samsat_id=request.glbm_samsat_id,
+                glbm_brand_id=brand_id,
+                glbm_pt_id=request.glbm_pt_id,
+                wilayah_cakupan_id=wilayah_cakupan_id,
+                wilayah_id=wilayah_id
+            )
+            db.add(new_detail)
+            db.commit()
+            db.refresh(new_detail)
+
+            result.append({
                 "id": new_detail.id,
                 "glbm_samsat_id": new_detail.glbm_samsat_id,
                 "glbm_brand_id": new_detail.glbm_brand_id,
                 "glbm_pt_id": new_detail.glbm_pt_id,
                 "wilayah_cakupan_id": new_detail.wilayah_cakupan_id,
                 "wilayah_id": new_detail.wilayah_id
-            }
+            })
+
+        return {
+            "status": "success",
+            "message": f"Berhasil menambahkan {len(result)} otorisasi",
+            "data": result
         }
 
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
-
 
 @app.get("/otorirasi-samsat")
 def get_otorirasi_samsat(
@@ -721,26 +752,66 @@ def add_wilayah_cakupan(
         return {"status": "error", "message": str(e)}
 
 
-# app.post("/import-excel/")
-# async def import_complex(file: UploadFile = file(...),db: Session = Depends(get_db)):
-#     if not file.filename.endswith('.xlsx'):
-#         raise HTTPException(status_code=400, detail="File Harus Bertipe (.xlsx)")
+import pandas as pd
+import io
+from fastapi import UploadFile, File, HTTPException
 
-#     try :
-#         contents = await file.read()
-#         df = pd.read_excel(contents, engine='openpyxl')
+@app.post("/import-excel/")
+async def import_excel(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        # baca seluruh isi file sebagai bytes
+        content = await file.read()
+        excel_data = io.BytesIO(content)
 
-#         for _, row in df.iterrows():
-#             # Misalnya, kita ingin menyimpan data ke model User
-#             pt = glbm_pt(
-#                 nama_pt=row['namaPt'],
-#                 kode_pt="Kodept",
-#             )
-#             db.add(glbm_pt)
-#             db.commit()
-#             db.refresh(pt)
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Terjadi kesalahan saat mengimpor file: {str(e)}")
+        # baca file excel dari stream
+        df = pd.read_excel(excel_data, engine="openpyxl", dtype=str)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error membaca file: {e}")
+
+    required_cols = ["norangka", "kodesamsat", "namaPT", "merk"]
+    for col in required_cols:
+        if col not in df.columns:
+            raise HTTPException(status_code=400, detail=f"Kolom '{col}' tidak ditemukan dalam Excel")
+
+    created = 0
+    for idx, row in df.iterrows():
+        # cari atau buat glbm_samsat
+        samsat = db.query(glbm_samsat).filter_by(kode_samsat=row["kodesamsat"]).first()
+        if not samsat:
+            raise HTTPException(status_code=400, detail=f"Samsat code '{row['kodesamsat']}' baris {idx+2} tidak valid")
+
+        # cari atau buat PT dan Brand jika diperlukan
+        pt = db.query(glbm_pt).filter_by(nama_pt=row["namaPT"]).first()
+        if not pt:
+            pt = glbm_pt(nama_pt=row["namaPT"], kode_pt=row.get("kode_cabang", row["namaPT"]))
+            db.add(pt)
+            db.commit()
+            db.refresh(pt)
+
+        brand = db.query(glbm_brand).filter_by(nama_brand=row["merk"]).first()
+        if not brand:
+            brand = glbm_brand(nama_brand=row["merk"], kode_brand=row["merk"][:10].upper())
+            db.add(brand)
+            db.commit()
+            db.refresh(brand)
+
+        stnk = STNKData(
+            user_id=user.id,
+            glbm_samsat_id=samsat.id,
+            nomor_rangka=row["norangka"],
+            kode_samsat=row["kode_samsat"],
+            nama_pt=row["namaPT"],
+            nama_brand=row["merk"],
+        )
+        db.add(stnk)
+        created += 1
+
+    db.commit()
+    return {"message": f"Berhasil membuat {created} entry STNKData"}
 
 @app.get("/glbm-pt")
 def get_glbm_pt(
