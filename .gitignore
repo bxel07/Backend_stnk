@@ -1,28 +1,19 @@
-# Python
+stnk_reader
+# Python cache files
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 
-# Virtual Environment
+# FastAPI specific
 .env
-.venv
-env/
+.venv/
 venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Temporary files
-temp_*
-*.tmp
-*.log
+env/
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
 
 # OS
 .DS_Store
