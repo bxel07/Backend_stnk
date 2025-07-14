@@ -152,6 +152,7 @@ def get_all_users():
 
         for user in users:
             user_data = {
+                "id": user.id,
                 "username": user.username,
                 "gmail": user.gmail,
                 "role": user.role.role if user.role else None,
