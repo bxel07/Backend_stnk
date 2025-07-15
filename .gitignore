@@ -18,4 +18,4 @@ env/
 # OS
 .DS_Store
 Thumbs.db
-app/storage 
+app/storage/
