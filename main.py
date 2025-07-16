@@ -138,7 +138,6 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session, joinedload
 from app.utils.auth import get_current_user 
 import pandas as pd
-from app.utils.security import hash_password  # atau path sesuai proyek kamu
 from pytz import timezone
 from datetime import datetime
 
