@@ -282,15 +282,17 @@ def register(data: RegisterData, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Registrasi gagal: {e}")
-class OtorisasiItem(BaseModel):
+# schemas.py
+
+class OtorisasiUpdate(BaseModel):
     brand_id: int
     pt_id: int
 
 class UpdateUserData(BaseModel):
-    username: Optional[str] = None
-    gmail: Optional[EmailStr] = None
-    role_id: Optional[int] = None
-    otorisasi: Optional[List[OtorisasiItem]] = None
+    username: Optional[str]
+    gmail: Optional[str]
+    role_id: Optional[int]
+    otorisasi: Optional[List[OtorisasiUpdate]]
 
 @app.put("/update-user/{user_id}")
 def update_user(
@@ -300,6 +302,7 @@ def update_user(
     current_user=Depends(require_role(RoleEnum.ADMIN, RoleEnum.SUPERADMIN))
 ):
     try:
+        # Cari user
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="User tidak ditemukan")
@@ -317,24 +320,29 @@ def update_user(
 
         # === Update Otorisasi: brand & pt ===
         if data.otorisasi:
+            # Ambil semua otorisasi milik user
             otorisasi_list = db.query(otorirasi_samsat).filter(
                 otorirasi_samsat.user_id == user.id
             ).all()
 
-            for i, otor in enumerate(otorisasi_list):
-                detail = db.query(Detail_otorirasi_samsat).filter(
-                    Detail_otorirasi_samsat.id == otor.detail_otorirasi_samsat_id
-                ).first()
+            detail_index = 0
 
-                if not detail or i >= len(data.otorisasi):
-                    continue
+            for otor in otorisasi_list:
+                detail_list = db.query(Detail_otorirasi_samsat).filter(
+                    Detail_otorirasi_samsat.otorirasi_samsat_id == otor.id
+                ).all()
 
-                otor_data = data.otorisasi[i]
+                for detail in detail_list:
+                    if detail_index >= len(data.otorisasi):
+                        break  # kalau input lebih sedikit dari jumlah detail
+                    otor_data = data.otorisasi[detail_index]
 
-                detail.glbm_brand_id = otor_data.brand_id
-                detail.glbm_pt_id = otor_data.pt_id
+                    # Update brand & pt
+                    detail.glbm_brand_id = otor_data.brand_id
+                    detail.glbm_pt_id = otor_data.pt_id
 
-                db.add(detail)
+                    db.add(detail)
+                    detail_index += 1
 
         db.commit()
         db.refresh(user)
