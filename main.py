@@ -1178,120 +1178,63 @@ class STNKSaveRequest(BaseModel):
 
 from sqlalchemy import text
 
-@app.post("/save-stnk-data/")
-async def save_data_stnk(request: STNKSaveRequest,current_user: dict = Depends(get_current_user)):
-    db: Session = SessionLocal()
+@app.post("/register")
+def register(data: RegisterData, db: Session = Depends(get_db)):
+    # Cek username & gmail
+    if db.query(User).filter(User.username == data.username).first():
+        raise HTTPException(status_code=400, detail="Username sudah terdaftar")
+    if db.query(User).filter(User.gmail == data.gmail).first():
+        raise HTTPException(status_code=400, detail="Gmail sudah terdaftar")
 
     try:
-        print(f"Received request: {request}")
-
-        if not request.nomor_rangka or request.nomor_rangka.strip() in ["", "-"]:
-            raise HTTPException(status_code=400, detail="Nomor rangka tidak boleh kosong")
-
-        # Cek apakah nomor rangka sudah ada
-        existing = db.query(STNKData).filter(
-            STNKData.nomor_rangka == request.nomor_rangka.strip()
-        ).first()
-        if existing:
-            return {
-                "status": "error",
-                "message": "Nomor rangka sudah ada di database"
-            }
-
-        # Cari samsat berdasarkan kode_samsat
-        samsat = None
-        glbm_samsat_id = None
-        final_kode_samsat = None
-        if request.kode_samsat:
-            samsat = db.query(glbm_samsat).filter(glbm_samsat.kode_samsat == request.kode_samsat.strip()).first()
-            if samsat:
-                glbm_samsat_id = samsat.id
-                final_kode_samsat = samsat.kode_samsat
-            else:
-                final_kode_samsat = None  # invalid -> null
-                glbm_samsat_id = None
-
-        # Rename file
-        old_path = request.path
-        old_dir = os.path.dirname(old_path)
-        ext = os.path.splitext(request.filename)[1]
-        new_filename = f"{request.nomor_rangka.strip()}{ext}"
-        new_path = os.path.join(old_dir, new_filename)
-
-        try:
-            os.rename(old_path, new_path)
-            print(f"File renamed from {old_path} to {new_path}")
-        except FileNotFoundError:
-            print(f"[WARNING] File tidak ditemukan: {old_path}")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Gagal mengganti nama file: {e}")
-
-        # Ambil jumlah dari detail (jika ada)
-        jumlah_value = request.details.jumlah if request.details else None
-
-        # Ambil nama_brand dan nama_pt via LEFT JOIN dari detail_otorirasi_samsat
-        nama_brand = None
-        nama_pt = None
-
-        if glbm_samsat_id:
-            sql = text("""
-                SELECT 
-                    b.nama_brand, p.nama_pt
-                FROM detail_otorirasi_samsat d
-                LEFT JOIN glbm_brand b ON d.glbm_brand_id = b.id
-                LEFT JOIN glbm_pt p ON d.glbm_pt_id = p.id
-                WHERE d.glbm_samsat_id = :samsat_id
-                LIMIT 1
-            """)
-            result = db.execute(sql, {"samsat_id": glbm_samsat_id}).fetchone()
-            if result:
-                nama_brand = result[0]
-                nama_pt = result[1]
-            
-        user_id=int(current_user.get("sub"))
-
-        # Simpan ke database
-        stnk_entry = STNKData(
-            file=new_filename,
-            path=new_path,
-            user_id=user_id,
-            glbm_samsat_id=glbm_samsat_id,  # otomatis
-            kode_samsat=final_kode_samsat,
-            nomor_rangka=request.nomor_rangka.strip(),
-            jumlah=jumlah_value,
-            nama_pt=nama_pt,
-            nama_brand=nama_brand
+        # 1. Simpan user
+        user = User(
+            username=data.username,
+            hashed_password=data.password,  # belum di-hash
+            gmail=data.gmail,
+            role_id=data.role_id,
         )
+        db.add(user)
+        db.flush()
 
-        db.add(stnk_entry)
+        # 2. Simpan stpm_orlap
+        biodata = stpm_orlap(
+            nama_lengkap=data.nama_lengkap,
+            nomor_telepon=data.nomor_telepon
+        )
+        db.add(biodata)
+        db.flush()
+
+        # 3. Simpan otorisasi_samsat
+        otorisasi = otorisasi_samsat(
+            user_id=user.id,
+            created_at=datetime.now(JAKARTA_TZ),
+            updated_at=datetime.now(JAKARTA_TZ)
+        )
+        db.add(otorisasi)
+        db.flush()
+        print(f"✅ Otorisasi berhasil dibuat: ID={otorisasi.id}, user_id={otorisasi.user_id}")
+
+        # 4. Simpan semua brand ID jika ada
+        for brand_id in data.glbm_brand_ids:
+            detail = Detail_otorirasi_samsat(
+                glbm_samsat_id=data.glbm_samsat_id,
+                wilayah_cakupan_id=1,
+                wilayah_id=1,
+                glbm_brand_id=brand_id,
+                glbm_pt_id=data.glbm_pt_id,
+                otorirasi_samsat_id=otorisasi.id
+            )
+            db.add(detail)
+
         db.commit()
-        db.refresh(stnk_entry)
+        return {"message": "Registrasi berhasil"}
 
-        return {
-            "status": "success",
-            "message": "STNK data berhasil disimpan",
-            "data": {
-                "id": stnk_entry.id,
-                "filename": stnk_entry.file,
-                "nomor_rangka": stnk_entry.nomor_rangka,
-                "jumlah": stnk_entry.jumlah,
-                "kode_samsat": stnk_entry.kode_samsat,
-                "user_id": stnk_entry.user_id,
-                "glbm_samsat_id": stnk_entry.glbm_samsat_id,
-                "nama_pt": stnk_entry.nama_pt,
-                "nama_brand": stnk_entry.nama_brand,
-                "created_at": stnk_entry.created_at
-            }
-        }
-
-    except HTTPException:
-        raise
     except Exception as e:
         db.rollback()
-        print(f"Error saving data: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error saving data: {str(e)}")
-    finally:
-        db.close()
+        raise HTTPException(status_code=400, detail=f"Registrasi gagal: {e}")
+
+
 class UpdateSTNKRequest(BaseModel):
     nomor_rangka: str
     jumlah: int
