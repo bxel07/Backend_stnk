@@ -144,53 +144,34 @@ import pandas as pd
 
 
 # Function untuk mengembalikan semua user
-def get_all_users():
-    db = SessionLocal()
-    try:
-        users = db.query(User).all()
-        result = []
-
-        for user in users:
-            user_data = {
-                "id": user.id,
-                "username": user.username,
-                "gmail": user.gmail,
-                "role": user.role.role if user.role else None,
-                "otorisasi": []
-            }
-
-            # Ambil semua otorisasi user
-            otorisasi_list = db.query(otorirasi_samsat).filter(
-                otorirasi_samsat.user_id == user.id
-            ).all()
-
-            for otor in otorisasi_list:
-                detail = db.query(Detail_otorirasi_samsat).filter(
-                    Detail_otorirasi_samsat.id == otor.detail_otorirasi_samsat_id
-                ).first()
-
-                if not detail:
-                    continue
-
-                user_data["otorisasi"].append({
-                    "brand_id": detail.glbm_brand_id,
-                    "pt_id": detail.glbm_pt_id,
-                    "samsat_id": detail.glbm_samsat_id,
-                    "wilayah_id": detail.wilayah_id,
-                    "wilayah_cakupan_id": detail.wilayah_cakupan_id
-                })
-
-            result.append(user_data)
-
-        return result
-    finally:
-        db.close()
-
-
-# Endpoint untuk mengirim hasil function dictionary
 @app.get("/users")
-def read_users(current_user=Depends(require_role(RoleEnum.CAO,RoleEnum.ADMIN, RoleEnum.SUPERADMIN))):
-    return {"data": get_all_users()}
+def get_all_users(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(RoleEnum.CAO, RoleEnum.ADMIN, RoleEnum.SUPERADMIN))
+):
+    users = db.query(User).all()
+    result = []
+
+    for user in users:
+        all_detail = []
+        for otorisasi in user.otorirasi_samsat:
+            all_detail.extend(otorisasi.detail_otorirasi_samsat)
+
+        brand_ids = list({d.glbm_brand_id for d in all_detail})
+        pt_ids = list({d.glbm_pt_id for d in all_detail})
+        samsat_ids = list({d.glbm_samsat_id for d in all_detail})
+
+        result.append({
+            "id": user.id,
+            "username": user.username,
+            "gmail": user.gmail,
+            "role": user.role.role if user.role else None,
+            "brand_ids": brand_ids,
+            "pt_id": pt_ids[0] if pt_ids else None,
+            "samsat_id": samsat_ids[0] if samsat_ids else None
+        })
+
+    return {"data": result}
 
 
 @app.get("/roles")
@@ -243,117 +224,64 @@ def get_db():
 
 class RegisterData(BaseModel):
     username: str
-    gmail: str
+    gmail: EmailStr
     password: str
     role_id: int
     nama_lengkap: str
     nomor_telepon: str
-    glbm_brand_ids: Optional[List[int]] = None # ⬅️ List brand
-    glbm_pt_id:Optional [int] = None # ⬅️ ID PT
-    glbm_samsat_id: int 
+    glbm_brand_ids: List[int]
+    glbm_pt_id: int
+    glbm_samsat_id: int
 
 
 @app.post("/register")
 def register(data: RegisterData, db: Session = Depends(get_db)):
-    # Validasi awal: field wajib
-    missing_fields = []
-    for field in ["username", "gmail", "password", "role_id", "nama_lengkap", "nomor_telepon"]:
-        if not getattr(data, field):
-            missing_fields.append(field)
-
-    if missing_fields:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Field berikut wajib diisi: {', '.join(missing_fields)}"
-        )
-
-    # Cek username & gmail unik
+    # Cek username & gmail
     if db.query(User).filter(User.username == data.username).first():
         raise HTTPException(status_code=400, detail="Username sudah terdaftar")
     if db.query(User).filter(User.gmail == data.gmail).first():
         raise HTTPException(status_code=400, detail="Gmail sudah terdaftar")
 
-    # Cek role
-    role = db.query(Role).filter(Role.id == data.role_id).first()
-    if not role:
-        raise HTTPException(status_code=404, detail="Role tidak ditemukan")
-
-    # Mulai transaksi DB
     try:
-        # Buat data orlap
-        new_orlap = stpm_orlap(
-            nama_lengkap=data.nama_lengkap,
-            nomor_telepon=data.nomor_telepon
-        )
-        db.add(new_orlap)
-        db.flush()
-
-        # Buat user
-        new_user = User(
+        # 1. Simpan user
+        user = User(
             username=data.username,
+            hashed_password=hash_password(data.password),
             gmail=data.gmail,
-            hashed_password=data.password,
-            role_id=role.id,
-            stpm_orlap_id=new_orlap.id
+            role_id=data.role_id,
+            nama_lengkap=data.nama_lengkap,
+            nomor_telepon=data.nomor_telepon,
         )
-        db.add(new_user)
-        db.flush()
+        db.add(user)
+        db.flush()  # Dapatkan user.id
 
-        otorisasi_list = []
+        # 2. Simpan otorisasi_samsat
+        otorisasi = otorirasi_samsat(
+            user_id=user.id,
+            created_at=datetime.now(JAKARTA_TZ),
+            updated_at=datetime.now(JAKARTA_TZ)
+        )
+        db.add(otorisasi)
+        db.flush()  # Dapatkan otorisasi.id
 
-        # Jika data otorisasi tersedia → proses
-        if data.glbm_samsat_id and data.glbm_brand_ids and data.glbm_pt_id:
-            samsat = db.query(glbm_samsat).filter(glbm_samsat.id == data.glbm_samsat_id).first()
-            if not samsat:
-                raise HTTPException(status_code=404, detail="Samsat tidak ditemukan")
-
-            wilayah_cakupan_id = samsat.wilayah_cakupan_id
-            wilayah_id = samsat.wilayah_id
-
-            for brand_id in data.glbm_brand_ids:
-                detail = Detail_otorirasi_samsat(
-                    glbm_samsat_id=data.glbm_samsat_id,
-                    glbm_brand_id=brand_id,
-                    glbm_pt_id=data.glbm_pt_id,
-                    wilayah_cakupan_id=wilayah_cakupan_id,
-                    wilayah_id=wilayah_id
-                )
-                db.add(detail)
-                db.flush()
-
-                otorisasi = otorirasi_samsat(
-                    user_id=new_user.id,
-                    detail_otorirasi_samsat_id=detail.id
-                )
-                db.add(otorisasi)
-                db.flush()
-
-                otorisasi_list.append({
-                    "detail_otorirasi_samsat_id": detail.id,
-                    "glbm_samsat_id": data.glbm_samsat_id,
-                    "glbm_brand_id": brand_id,
-                    "glbm_pt_id": data.glbm_pt_id
-                })
+        # 3. Simpan detail otorisasi berdasarkan semua brand_id
+        for brand_id in data.glbm_brand_ids:
+            detail = Detail_otorirasi_samsat(
+                glbm_samsat_id=data.glbm_samsat_id,
+                wilayah_cakupan_id=1,  # Default, atau ambil dari data
+                wilayah_id=1,
+                glbm_brand_id=brand_id,
+                glbm_pt_id=data.glbm_pt_id,
+                otorirasi_samsat_id=otorisasi.id
+            )
+            db.add(detail)
 
         db.commit()
-
-        return {
-            "message": "Registrasi berhasil",
-            "user": {
-                "id": new_user.id,
-                "username": new_user.username,
-                "gmail": new_user.gmail,
-                "role": role.role.value,
-                "nama_lengkap": new_orlap.nama_lengkap,
-                "nomor_telepon": new_orlap.nomor_telepon
-            },
-            "otorisasi": otorisasi_list if otorisasi_list else None
-        }
+        return {"message": "Registrasi berhasil"}
 
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Registrasi gagal: {str(e)}")
-
+        raise HTTPException(status_code=400, detail=f"Registrasi gagal: {e}")
 class OtorisasiItem(BaseModel):
     brand_id: int
     pt_id: int
@@ -427,29 +355,48 @@ def update_user(
         raise HTTPException(status_code=500, detail="Terjadi kesalahan saat memperbarui user")
 
 @app.get("/user-profile")
-def get_user_profile(
-    current_user : dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    try:
-        user_id = int(current_user.get("sub"))  # Ambil user_id dari token
-        user = db.query(User).filter(User.id == user_id).first()
+def get_user_profile(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    user_id = int(current_user["sub"])
 
-        if not user:
-            raise HTTPException(status_code=404, detail="User tidak ditemukan")
+    # Ambil user dan relasinya
+    user = db.query(User).options(
+        joinedload(User.role),
+        joinedload(User.stpm_orlap)
+    ).filter(User.id == user_id).first()
 
-        return {
-            "id": user.id,
-            "username": user.username,
-            "gmail": user.gmail,
-            "nama_lengkap": user.stpm_orlap.nama_lengkap,
-            "nomor_telepon": user.stpm_orlap.nomor_telepon,
-            "role": user.role.role.value
-        }
-    except Exception as e:
-        print("ERROR GET USER PROFILE:", str(e))
-        raise HTTPException(status_code=500, detail="Terjadi kesalahan saat mengambil profil user")
+    if not user:
+        raise HTTPException(status_code=404, detail="User tidak ditemukan")
 
+    profile = {
+        "id": user.id,
+        "username": user.username,
+        "gmail": user.gmail,
+        "role": user.role.role if user.role else None,
+        "nama_lengkap": user.stpm_orlap.nama_lengkap if user.stpm_orlap else None,
+        "nomor_telepon": user.stpm_orlap.nomor_telepon if user.stpm_orlap else None,
+        "otorisasi": []
+    }
+
+    # Ambil otorisasi
+    otorisasi_list = db.query(Detail_otorirasi_samsat).join(otorirasi_samsat).filter(
+        otorirasi_samsat.user_id == user.id
+    ).all()
+
+    for detail in otorisasi_list:
+        samsat = db.query(glbm_samsat).filter(glbm_samsat.id == detail.glbm_samsat_id).first()
+        brand = db.query(glbm_brand).filter(glbm_brand.id == detail.glbm_brand_id).first()
+        pt = db.query(glbm_pt).filter(glbm_pt.id == detail.glbm_pt_id).first()
+
+        profile["otorisasi"].append({
+            "samsat_id": samsat.id if samsat else None,
+            "samsat_nama": samsat.nama_samsat if samsat else None,
+            "pt_id": pt.id if pt else None,
+            "pt_nama": pt.nama_pt if pt else None,
+            "brand_id": brand.id if brand else None,
+            "brand_nama": brand.nama_brand if brand else None
+        })
+
+    return profile
 class UpdateUserProfile(BaseModel):
     password: Optional[str] = None
 

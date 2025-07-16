@@ -19,3 +19,4 @@ env/
 .DS_Store
 Thumbs.db
 app/storage/
+stnk_data

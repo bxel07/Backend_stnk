@@ -1,0 +1,246 @@
+[33mcommit c59d4c4ccafaf91696f6e45e5205ad9c20d7192b[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mArya[m[33m)[m
+Merge: 4a5c54b2 c75ae05c
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Wed Jul 16 09:07:15 2025 +0700
+
+    Merge branch 'main' of https://github.com/bxel07/Backend_stnk into Arya
+
+[33mcommit 4a5c54b27a64e426d97de181d9197e14e4a2c8cb[m[33m ([m[1;31morigin/Arya[m[33m, [m[1;32mmaster[m[33m)[m
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Tue Jul 15 17:12:41 2025 +0700
+
+    perubahan table otorisasi data dan detail otorisasi data
+
+[33mcommit c75ae05c4a14eba78510429fc0e38bbe8f8d9250[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: qb_analytix <qb_analytix@qb_analytix.com>
+Date:   Tue Jul 15 14:39:55 2025 +0700
+
+    fix git ignore
+
+[33mcommit 0eafb399444ce6ed6a046c79ca98152932d3fadf[m
+Author: qb_analytix <qb_analytix@qb_analytix.com>
+Date:   Tue Jul 15 14:38:51 2025 +0700
+
+    Remove app.storage from tracking and add to .gitignore
+
+[33mcommit 5be20cb76fadf4814a313778b85b4b052a7e4f5d[m
+Merge: b1abe5ee 0e6918da
+Author: Yogi <90438343+bxel07@users.noreply.github.com>
+Date:   Tue Jul 15 14:14:34 2025 +0700
+
+    Merge pull request #5 from bxel07/master
+    
+    Master
+
+[33mcommit b1abe5ee494807104968dc33a27f3a8536f0ab68[m
+Merge: 2e42fe73 c828ace3
+Author: bxel07 <root@srv862836.hstgr.cloud>
+Date:   Tue Jul 15 01:58:33 2025 +0700
+
+    fix conflict
+
+[33mcommit 0e6918dadd79c8ffd84c011af2473c4183b018e5[m[33m ([m[1;31morigin/master[m[33m)[m
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Tue Jul 15 00:41:33 2025 +0700
+
+    menambahkan filterisasi user
+
+[33mcommit cc1b469099de08f7cc0e5bcbfb78a0f796b1f7e4[m
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Mon Jul 14 16:35:28 2025 +0700
+
+    nambahin return user id pas gett user
+
+[33mcommit 88bcc5dbfd9301e64f5bea33c951205d6ea98243[m
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Mon Jul 14 15:35:56 2025 +0700
+
+    perbaikan registrasi
+
+[33mcommit 5d1a4253b72b0f06b9ff21406c37704a731184e4[m
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Mon Jul 14 15:03:32 2025 +0700
+
+    menambahkan update by id
+
+[33mcommit 2274dd4f4080dd7597ae62ce0c47e965b2892194[m
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Mon Jul 14 11:30:37 2025 +0700
+
+    tambahan registrasi dan filterisasi stnk data
+
+[33mcommit 7c23d02ded9790a0427bc0b8bf2cd380c4581f09[m
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Mon Jul 14 09:49:47 2025 +0700
+
+    menambahkan yang kurang
+
+[33mcommit c828ace368d17fc78c7002fbcf6057d17dcb1d53[m
+Merge: cae49e07 62106027
+Author: Yogi <90438343+bxel07@users.noreply.github.com>
+Date:   Mon Jul 14 09:15:40 2025 +0700
+
+    Merge pull request #4 from bxel07/Arya
+    
+    Arya
+
+[33mcommit 62106027e4bfa54b03bb506eb3d2499b6ea6bdc4[m
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Fri Jul 11 17:33:59 2025 +0700
+
+    penambahan table dan filterisasi stnk cao berdasarkan brand dan wilayah cakupan
+
+[33mcommit 09889f52c1fc51e7a62261c8e243b2659d170d1e[m
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Fri Jul 11 10:50:36 2025 +0700
+
+    menambahkan profile dan update profile
+
+[33mcommit f93b40cf90274d96b216989fca2c0ecf2c21f1c1[m
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Fri Jul 11 10:46:34 2025 +0700
+
+    menambahkan profile dan update profile
+
+[33mcommit cae49e07446d0e39d19e2d686dd0d2c4d4f8542c[m
+Merge: ab07167e 615fdfc2
+Author: Yogi <90438343+bxel07@users.noreply.github.com>
+Date:   Thu Jul 10 23:25:45 2025 +0700
+
+    Merge pull request #3 from bxel07/Arya
+    
+    menjalankan command untuk reqruitment.txt
+
+[33mcommit 615fdfc249738d9374221addf8434cd5549faed2[m
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Thu Jul 10 17:05:54 2025 +0700
+
+    menjalankan command untuk reqruitment.txt
+
+[33mcommit ab07167eb4b49b95a71e5d9754a87689a2057bef[m
+Merge: f4c2bfbc 19f7c98a
+Author: Yogi <90438343+bxel07@users.noreply.github.com>
+Date:   Thu Jul 10 16:00:32 2025 +0700
+
+    Merge pull request #2 from bxel07/Arya
+    
+    Arya
+
+[33mcommit 19f7c98a78584f8b8a4b7236a2ed4c58bf751c53[m
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Thu Jul 10 15:37:24 2025 +0700
+
+    perbaikan midleware
+
+[33mcommit ecd335a5feca368e04127b8b5544a7afe01ca9ea[m
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Thu Jul 10 14:36:55 2025 +0700
+
+    perubahan file auth
+
+[33mcommit ec44db11db030fe11d738381731fff9402332f28[m
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Thu Jul 10 11:57:00 2025 +0700
+
+    tambah penyesuaian role
+
+[33mcommit f4c2bfbc8d62771dd5cf61de4f758389e5cc5f05[m
+Merge: f2f2d3ee 3ed3e975
+Author: Yogi <90438343+bxel07@users.noreply.github.com>
+Date:   Thu Jul 10 08:22:58 2025 +0700
+
+    Merge pull request #1 from bxel07/Arya
+    
+    Arya
+
+[33mcommit 3ed3e9756b261c08d2ff7937258f9c77dee0dfbc[m
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Wed Jul 9 15:47:25 2025 +0700
+
+    menyelesaikan table auc dan master
+
+[33mcommit 3296c54e0a92f0fd21aa94e024b6a233c2bf3818[m
+Author: Arya0907 <mhmdarya309@gmail.com>
+Date:   Wed Jul 9 08:40:26 2025 +0700
+
+    menambamahkan beberapa table
+
+[33mcommit f2f2d3ee276faa531197b530e3fdd97296d4a322[m[33m ([m[1;32mmain[m[33m)[m
+Author: Yogi <90438343+bxel07@users.noreply.github.com>
+Date:   Mon Jul 7 14:02:05 2025 +0700
+
+    Create README.md
+
+[33mcommit 54099f86aba12a5185fb5525b9d9cdf1b6081308[m
+Author: qb_analytix <qb_analytix@qb_analytix.com>
+Date:   Mon Jul 7 13:54:44 2025 +0700
+
+    update: requirement install
+
+[33mcommit fa3a1bf7f7f5f209de1c8657995553d2972f8b7e[m
+Author: qb_analytix <qb_analytix@qb_analytix.com>
+Date:   Mon Jul 7 13:47:43 2025 +0700
+
+    fix: remove pretrained model
+
+[33mcommit 617f8e8fb1b30842dfc46b3ef0f81ea1b965a955[m
+Author: qb_analytix <qb_analytix@qb_analytix.com>
+Date:   Mon Jul 7 13:46:17 2025 +0700
+
+    clean: not useable config
+
+[33mcommit 2e42fe73965584d0094ef879a4e6416954c571be[m
+Merge: 8bd6e6a9 8df4183a
+Author: bxel07 <root@srv862836.hstgr.cloud>
+Date:   Thu Jun 12 10:35:57 2025 +0700
+
+    s
+
+[33mcommit 8df4183a6259eae8183e02400f62521bd6a2cbb6[m
+Author: qb_analytix <qb_analytix@qb_analytix.com>
+Date:   Thu Jun 12 10:29:00 2025 +0700
+
+    add filter endpoint by date
+
+[33mcommit 8bd6e6a9791e33120a9ece8df8a39ee003e1d62e[m
+Merge: 477c5507 8fb5d678
+Author: root <root@srv862836.hstgr.cloud>
+Date:   Thu Jun 12 09:18:47 2025 +0700
+
+    fix
+
+[33mcommit 8fb5d6784c4367ea0289607f0d82a37436659f35[m
+Author: qb_analytix <qb_analytix@qb_analytix.com>
+Date:   Thu Jun 12 09:16:10 2025 +0700
+
+    fix code : url
+
+[33mcommit 477c5507a51546518e1f9438da150d59d482cab4[m
+Author: root <root@srv862836.hstgr.cloud>
+Date:   Thu Jun 12 02:35:26 2025 +0700
+
+    Clean up tracked files
+
+[33mcommit 5ae2a5efbf5ff40992eb3da4269a9ca816e5f0ab[m
+Author: root <root@srv862836.hstgr.cloud>
+Date:   Thu Jun 12 02:35:14 2025 +0700
+
+    Untrack Python cache files and add .gitignore
+
+[33mcommit bfebd260af2a6185364a29c1bc22b44c469544f3[m
+Author: qb_analytix <qb_analytix@qb_analytix.com>
+Date:   Thu Jun 12 02:28:50 2025 +0700
+
+    fixocde
+
+[33mcommit 4dd1862b6f10e888bafe29f1206ce033fff78a2d[m
+Author: qb_analytix <qb_analytix@qb_analytix.com>
+Date:   Thu Jun 12 02:14:12 2025 +0700
+
+    fix code
+
+[33mcommit d8ef7d3980008e2eba575a7e5cebf40b9c26b78c[m
+Author: qb_analytix <qb_analytix@qb_analytix.com>
+Date:   Thu Jun 12 01:00:58 2025 +0700
+
+    first commit

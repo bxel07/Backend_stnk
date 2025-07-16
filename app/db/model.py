@@ -143,6 +143,7 @@ class Detail_otorirasi_samsat(Base):
     wilayah_id = Column(Integer, ForeignKey("glbm_wilayah.id"), nullable=False)
     glbm_brand_id = Column(Integer, ForeignKey("glbm_brand.id"), nullable=False)
     glbm_pt_id = Column(Integer, ForeignKey("glbm_pt.id"), nullable=False)
+    otorirasi_samsat_id = Column(Integer, ForeignKey("otorirasi_samsat.id"), nullable=False)
 
     wilayah = relationship("glbm_wilayah", back_populates="detail_otorirasi_samsat")
     detail_wilayah_cakupan = relationship("glbm_wilayah_cakupan", back_populates="detail_otorirasi_samsat")
@@ -158,7 +159,6 @@ class otorirasi_samsat(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    detail_otorirasi_samsat_id = Column(Integer, ForeignKey("detail_otorirasi_samsat.id"), nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(JAKARTA_TZ), nullable=False)
     updated_at = Column(DateTime, default=lambda: datetime.now(JAKARTA_TZ), onupdate=lambda: datetime.now(JAKARTA_TZ), nullable=False)
 
@@ -189,7 +189,7 @@ class master_excel(Base):
     __tablename__ = "master_excel"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    norangka = Column(String)
+    norangka = Column(String,unique=True)
     nama_stnk = Column(String)
     kode_tipe = Column(String)
     tipe = Column(String)
