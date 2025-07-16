@@ -285,7 +285,7 @@ def register(data: RegisterData, db: Session = Depends(get_db)):
                     wilayah_cakupan_id=1,
                     wilayah_id=1,
                     glbm_brand_id=brand_id,
-                    glbm_pt_id=data.glbm_pt_id,
+                    glbm_pt_id=data.glbm_pt_id[0] if data.glbm_pt_id else None,
                     otorirasi_samsat_id=otorisasi.id
                 )
                 db.add(detail)
