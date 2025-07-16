@@ -138,6 +138,13 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session, joinedload
 from app.utils.auth import get_current_user 
 import pandas as pd
+from app.utils.security import hash_password  # atau path sesuai proyek kamu
+from pytz import timezone
+from datetime import datetime
+
+JAKARTA_TZ = timezone("Asia/Jakarta")
+
+
 
 
 
@@ -249,11 +256,17 @@ def register(data: RegisterData, db: Session = Depends(get_db)):
             hashed_password=hash_password(data.password),
             gmail=data.gmail,
             role_id=data.role_id,
-            nama_lengkap=data.nama_lengkap,
-            nomor_telepon=data.nomor_telepon,
         )
+
         db.add(user)
         db.flush()  # Dapatkan user.id
+
+        biodata = stpm_orlap(
+            nama_lengkap=data.nama_lengkap,
+            nomor_telepon=data.nomor_telepon
+        )
+        db.add(biodata)
+        db.flush()
 
         # 2. Simpan otorisasi_samsat
         otorisasi = otorirasi_samsat(
@@ -904,26 +917,29 @@ def read_root():
 
 
     db.close()
+
 @app.get("/stnk-data/")
-def get_all_stnk_data(current_user: dict = Depends(get_current_user)):    
-    db = SessionLocal()
+def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
+    db: Session = SessionLocal()
     try:
         role = current_user.get("role")
-        user_id = int(current_user.get("sub"))  # user_id dari token
-
+        user_id = int(current_user.get("sub"))  # ID user dari token
         query = db.query(STNKData)
 
         if role == "superadmin":
             stnk_entries = query.all()
 
         elif role == "cao":
-            otorisasi_query = db.query(Detail_otorirasi_samsat).join(otorirasi_samsat).filter(
+            otorisasi_rows = db.query(Detail_otorirasi_samsat).options(
+                joinedload(Detail_otorirasi_samsat.glbm_brand),
+                joinedload(Detail_otorirasi_samsat.glbm_pt)
+            ).join(otorirasi_samsat).filter(
                 otorirasi_samsat.user_id == user_id
-            )
+            ).all()
 
-            wilayah_cakupan_ids = [row.wilayah_cakupan_id for row in otorisasi_query]
-            brand_names = [row.glbm_brand.nama_brand for row in otorisasi_query if row.glbm_brand]
-            pt_names = [row.glbm_pt.nama_pt for row in otorisasi_query if row.glbm_pt]
+            wilayah_cakupan_ids = [row.wilayah_cakupan_id for row in otorisasi_rows]
+            brand_names = [row.glbm_brand.nama_brand for row in otorisasi_rows if row.glbm_brand]
+            pt_names = [row.glbm_pt.nama_pt for row in otorisasi_rows if row.glbm_pt]
 
             samsat_ids = db.query(glbm_samsat.id).filter(
                 glbm_samsat.wilayah_cakupan_id.in_(wilayah_cakupan_ids)
@@ -939,12 +955,14 @@ def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
             stnk_entries = query.filter(*filters).all()
 
         elif role == "admin":
-            otorisasi_query = db.query(Detail_otorirasi_samsat).join(otorirasi_samsat).filter(
+            otorisasi_rows = db.query(Detail_otorirasi_samsat).options(
+                joinedload(Detail_otorirasi_samsat.glbm_pt)
+            ).join(otorirasi_samsat).filter(
                 otorirasi_samsat.user_id == user_id
-            )
+            ).all()
 
-            wilayah_ids = [row.wilayah_id for row in otorisasi_query]
-            pt_names = [row.glbm_pt.nama_pt for row in otorisasi_query if row.glbm_pt]
+            wilayah_ids = [row.wilayah_id for row in otorisasi_rows]
+            pt_names = [row.glbm_pt.nama_pt for row in otorisasi_rows if row.glbm_pt]
 
             samsat_ids = db.query(glbm_samsat.id).filter(
                 glbm_samsat.wilayah_id.in_(wilayah_ids)

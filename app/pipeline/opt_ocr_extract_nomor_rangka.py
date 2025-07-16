@@ -255,6 +255,14 @@ def run_batch_processing(batch_directory: str, pipeline_path: PaddleOCR, candida
             "message": f"Tidak ada file gambar (.jpg, .jpeg, .png) yang ditemukan di direktori '{batch_directory}'"
         }
 
+    norangka_map = {
+        row.norangka: {
+            "samsat": row.samsat,
+            "kode_samsat": row.kode_samsat,
+            "merk": row.merk
+        } for row in db.query(master_excel).all()
+    }
+
     all_results = []
     success_count = 0
     fail_count = 0
@@ -263,6 +271,7 @@ def run_batch_processing(batch_directory: str, pipeline_path: PaddleOCR, candida
         filename = os.path.basename(image_path)
         vin_result = process_single_image(pipeline, image_path, candidate_count)
         full_path = os.path.join(batch_directory, filename)  # ✅ Ditambahkan path lengkap
+        
 
         if vin_result.get("is_valid"):
             success_count += 1
@@ -276,7 +285,10 @@ def run_batch_processing(batch_directory: str, pipeline_path: PaddleOCR, candida
                     "asal_kendaraan": vin_result.get('country_of_origin'),
                     "pabrikan": vin_result.get('manufacturer'),
                     "tahun_kendaraan": vin_result.get('vehicle_year'),
-                    "jumlah": vin_result.get('jumlah') or 0
+                    "jumlah": vin_result.get('jumlah') or 0,
+                    "samsat": "-",
+                    "kode samsat": "-",
+                    "merk" : "-"
                 },
                 "error_message": None
             }

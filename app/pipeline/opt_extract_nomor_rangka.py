@@ -274,7 +274,9 @@ def run_batch_processing(batch_directory: str, pipeline_path: create_pipeline, c
         full_path = os.path.join(batch_directory, filename)
 
         nomor_rangka = vin_result.get("vin")
-        matched_info = norangka_map.get(nomor_rangka, {"samsat": "-", "kode_samsat": "-", "merk": "-"})
+        matched_info = "HAHAHAHAHAHAH"
+
+        print(matched_info)
 
         if vin_result.get("is_valid"):
             success_count += 1
@@ -289,10 +291,9 @@ def run_batch_processing(batch_directory: str, pipeline_path: create_pipeline, c
                     "pabrikan": vin_result.get("manufacturer"),
                     "tahun_kendaraan": vin_result.get("vehicle_year"),
                     "jumlah": vin_result.get("jumlah") or 0,
-                    # ✅ Tambahan:
-                    "samsat": matched_info["samsat"],
-                    "kode_samsat": matched_info["kode_samsat"],
-                    "merk": matched_info["merk"],
+                    "samsat": matched_info["samsat"] or "-",
+                    "kode_samsat": matched_info["kode_samsat"] or "-",
+                    "merk": matched_info["merk"] or "-",
                 },
                 "error_message": None
             }
