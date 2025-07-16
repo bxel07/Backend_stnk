@@ -236,7 +236,7 @@ class RegisterData(BaseModel):
     nama_lengkap: str
     nomor_telepon: str
     glbm_brand_ids: Optional[List[int]] = []
-    glbm_pt_id: Optional[List[int]] = None
+    glbm_pt_id: Optional[List[int]] = []
     glbm_samsat_id: int
 
 
