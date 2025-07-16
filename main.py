@@ -175,6 +175,12 @@ def get_all_users(
             "brand_ids": brand_ids,
             "pt_id": pt_ids[0] if pt_ids else None,
             "samsat_id": samsat_ids[0] if samsat_ids else None
+            "otorisasi":[
+                {
+                    "pt_id": detail.glbm_pt_id,
+                    "brand_id": detail.glbm_brand_id,
+                } for detail in all_detail
+            ]
         })
 
     return {"data": result}
