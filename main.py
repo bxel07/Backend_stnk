@@ -235,8 +235,8 @@ class RegisterData(BaseModel):
     role_id: int
     nama_lengkap: str
     nomor_telepon: str
-    glbm_brand_ids: Optional[List[int]]
-    glbm_pt_id: Optional[List[int]]
+    glbm_brand_ids: Optional[List[int]] = []
+    glbm_pt_id: Optional[List[int]] = None
     glbm_samsat_id: int
 
 
@@ -249,44 +249,46 @@ def register(data: RegisterData, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Gmail sudah terdaftar")
 
     try:
-        # 1. Simpan user
-        user = User(
-            username=data.username,
-            hashed_password=data.password,
-            gmail=data.gmail,
-            role_id=data.role_id,
-        )
-
-        db.add(user)
-        db.flush()  # Dapatkan user.id
-
+        # 1. Simpan biodata terlebih dahulu
         biodata = stpm_orlap(
             nama_lengkap=data.nama_lengkap,
             nomor_telepon=data.nomor_telepon
         )
         db.add(biodata)
-        db.flush()
+        db.flush()  # Dapatkan biodata.id
 
-        # 2. Simpan otorisasi_samsat
+        # 2. Simpan user dan hubungkan ke biodata
+        user = User(
+            username=data.username,
+            hashed_password=data.password,
+            gmail=data.gmail,
+            role_id=data.role_id,
+            stpm_orlap_id=biodata.id  # ✅ refer ke biodata
+        )
+        db.add(user)
+        db.flush()  # Dapatkan user.id
+
+        # 3. Simpan otorisasi_samsat
         otorisasi = otorirasi_samsat(
             user_id=user.id,
             created_at=datetime.now(JAKARTA_TZ),
             updated_at=datetime.now(JAKARTA_TZ)
         )
         db.add(otorisasi)
-        db.flush()  # Dapatkan otorisasi.id
+        db.flush()
 
-        # 3. Simpan detail otorisasi berdasarkan semua brand_id
-        for brand_id in data.glbm_brand_ids:
-            detail = Detail_otorirasi_samsat(
-                glbm_samsat_id=data.glbm_samsat_id,
-                wilayah_cakupan_id=1,  # Default, atau ambil dari data
-                wilayah_id=1,
-                glbm_brand_id=brand_id,
-                glbm_pt_id=data.glbm_pt_id,
-                otorirasi_samsat_id=otorisasi.id
-            )
-            db.add(detail)
+        # 4. Simpan detail otorisasi
+        if data.glbm_brand_ids:  # ✅ Cek apakah tidak None
+            for brand_id in data.glbm_brand_ids:
+                detail = Detail_otorirasi_samsat(
+                    glbm_samsat_id=data.glbm_samsat_id,
+                    wilayah_cakupan_id=1,
+                    wilayah_id=1,
+                    glbm_brand_id=brand_id,
+                    glbm_pt_id=data.glbm_pt_id,
+                    otorirasi_samsat_id=otorisasi.id
+                )
+                db.add(detail)
 
         db.commit()
         return {"message": "Registrasi berhasil"}
@@ -294,7 +296,7 @@ def register(data: RegisterData, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Registrasi gagal: {e}")
-# schemas.py
+
 
 class OtorisasiUpdate(BaseModel):
     brand_id: int
