@@ -134,7 +134,7 @@ from app.middleware.login import LoginMiddleware
 app.add_middleware(LoginMiddleware)
 from app.utils.auth import require_role
 from app.db.database import get_db
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session, joinedload
 from app.utils.auth import get_current_user 
 import pandas as pd
@@ -1156,10 +1156,11 @@ async def upload_stnk_batch(
             print(f"INFO: Direktori sementara '{batch_dir}' telah berhasil dihapus.")
 
 class STNKDetail(BaseModel):
-    jumlah: Optional[int] = None
+    jumlah: int
+
 
 class STNKSaveRequest(BaseModel):
-    nomor_rangka: str
+    nomor_rangka: str = Field(... , min_length=17, max_length=17)
     filename: str
     path: str
     kode_samsat: Optional[str] = None  # ✅ Tambahkan ini
