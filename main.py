@@ -236,8 +236,8 @@ class RegisterData(BaseModel):
     role_id: int
     nama_lengkap: str
     nomor_telepon: str
-    glbm_brand_ids: List[int]
-    glbm_pt_id: int
+    glbm_brand_ids: Optional[List[int]]
+    glbm_pt_id: Optional[List[int]]
     glbm_samsat_id: int
 
 
@@ -253,7 +253,7 @@ def register(data: RegisterData, db: Session = Depends(get_db)):
         # 1. Simpan user
         user = User(
             username=data.username,
-            hashed_password=hash_password(data.password),
+            hashed_password=data.password,
             gmail=data.gmail,
             role_id=data.role_id,
         )
