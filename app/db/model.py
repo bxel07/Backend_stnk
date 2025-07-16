@@ -141,8 +141,8 @@ class Detail_otorirasi_samsat(Base):
     glbm_samsat_id = Column(Integer, ForeignKey("glbm_samsat.id"), nullable=False)
     wilayah_cakupan_id = Column(Integer, ForeignKey("glbm_wilayah_cakupan.id"), nullable=False)
     wilayah_id = Column(Integer, ForeignKey("glbm_wilayah.id"), nullable=False)
-    glbm_brand_id = Column(Integer, ForeignKey("glbm_brand.id"), nullable=False)
-    glbm_pt_id = Column(Integer, ForeignKey("glbm_pt.id"), nullable=False)
+    glbm_brand_id = Column(Integer, ForeignKey("glbm_brand.id"), nullable=True)
+    glbm_pt_id = Column(Integer, ForeignKey("glbm_pt.id"), nullable=True)
     otorirasi_samsat_id = Column(Integer, ForeignKey("otorirasi_samsat.id"), nullable=False)
 
     wilayah = relationship("glbm_wilayah", back_populates="detail_otorirasi_samsat")

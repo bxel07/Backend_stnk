@@ -1084,10 +1084,12 @@ class STNKSaveRequest(BaseModel):
 # =============================================================================
 # ENDPOINT API TERINTEGRASI
 # =============================================================================
+
 @app.post("/upload-stnk-batch/")
 async def upload_stnk_batch(
-    files: List[UploadFile] = File(..., description="Unggah hingga 10 gambar STNK untuk diproses.")):
-
+    files: List[UploadFile] = File(..., description="Unggah hingga 10 gambar STNK untuk diproses."),
+    db: Session = Depends(get_db)  # ✅ Inject DB session di sini
+):
     """
     Endpoint terintegrasi yang melakukan:
     1. Menerima unggahan batch gambar (maksimal 10 file).
@@ -1123,7 +1125,7 @@ async def upload_stnk_batch(
         # fungsi 'process_batch_images' yang blocking di thread pool.
         # 'await' menunggu hasilnya tanpa memblokir event-loop utama.
         processing_results = await run_in_threadpool(
-            partial(run_batch_processing, batch_directory=batch_dir, pipeline_path=ml_models["ocr_model"], candidate_count=10)
+            partial(run_batch_processing, batch_directory=batch_dir, pipeline_path=ml_models["ocr_model"], candidate_count=10, db=db)
         )
 
         # all_norangka= {row.norangka for row in db.query(master_excel.norangka).all()}

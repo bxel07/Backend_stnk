@@ -4,6 +4,9 @@ import time
 import glob
 from paddlex import create_pipeline # Pastikan paddlex terinstal
 from paddleocr import PaddleOCR
+from sqlalchemy.orm import Session
+from app.db.model import master_excel
+
 
 # ==============================================================================
 # BAGIAN 1: KONSTANTA GLOBAL & FUNGSI VALIDASI
@@ -229,21 +232,24 @@ def process_single_image(pipeline, image_path: str, candidate_count: int):
 # PERUBAHAN UTAMA: BAGIAN 5 - FUNGSI UTAMA YANG AKAN DIPANGGIL API
 # Fungsi ini menggantikan `main()` lama Anda.
 # ==============================================================================
-def run_batch_processing(batch_directory: str, pipeline_path: PaddleOCR, candidate_count: int = 10):
+def run_batch_processing(
+    batch_directory: str,
+    pipeline_path: PaddleOCR,
+    candidate_count: int = 10,
+    db: Session = None
+):
     import time, os, glob
 
     start_total_time = time.time()
 
-    # Muat pipeline
     try:
         pipeline = pipeline_path
     except Exception as e:
         return {
             "status": "error",
-            "message": f"Error kritis saat memuat pipeline dari '{pipeline_path}': {e}"
+            "message": f"Error saat memuat pipeline: {e}"
         }
 
-    # Ambil semua file gambar
     image_extensions = ('*.jpg', '*.jpeg', '*.png')
     image_paths = []
     for ext in image_extensions:
@@ -252,11 +258,12 @@ def run_batch_processing(batch_directory: str, pipeline_path: PaddleOCR, candida
     if not image_paths:
         return {
             "status": "error",
-            "message": f"Tidak ada file gambar (.jpg, .jpeg, .png) yang ditemukan di direktori '{batch_directory}'"
+            "message": f"Tidak ada file gambar valid di '{batch_directory}'"
         }
 
+    # ✅ Ambil data master_excel dan buat peta VIN -> detail
     norangka_map = {
-        row.norangka: {
+        row.norangka.strip().upper(): {
             "samsat": row.samsat,
             "kode_samsat": row.kode_samsat,
             "merk": row.merk
@@ -269,26 +276,28 @@ def run_batch_processing(batch_directory: str, pipeline_path: PaddleOCR, candida
 
     for image_path in image_paths:
         filename = os.path.basename(image_path)
+        full_path = os.path.join(batch_directory, filename)
+
         vin_result = process_single_image(pipeline, image_path, candidate_count)
-        full_path = os.path.join(batch_directory, filename)  # ✅ Ditambahkan path lengkap
-        
+        nomor_rangka = vin_result.get("vin", "").strip().upper()
+        matched_info = norangka_map.get(nomor_rangka, {"samsat": "-", "kode_samsat": "-", "merk": "-"})
 
         if vin_result.get("is_valid"):
             success_count += 1
             formatted_result = {
                 "filename": filename,
-                "path": full_path,  
+                "path": full_path,
                 "status": "success",
-                "nomor_rangka": vin_result.get('vin'),
+                "nomor_rangka": nomor_rangka,
                 "details": {
                     "found_by_method": vin_result.get('found_by_method'),
                     "asal_kendaraan": vin_result.get('country_of_origin'),
                     "pabrikan": vin_result.get('manufacturer'),
                     "tahun_kendaraan": vin_result.get('vehicle_year'),
                     "jumlah": vin_result.get('jumlah') or 0,
-                    "samsat": "-",
-                    "kode samsat": "-",
-                    "merk" : "-"
+                    "samsat": matched_info["samsat"],
+                    "kode_samsat": matched_info["kode_samsat"],
+                    "merk": matched_info["merk"]
                 },
                 "error_message": None
             }
@@ -296,7 +305,7 @@ def run_batch_processing(batch_directory: str, pipeline_path: PaddleOCR, candida
             fail_count += 1
             formatted_result = {
                 "filename": filename,
-                "path": full_path,  # ✅ Masukkan path ke response meskipun gagal
+                "path": full_path,
                 "status": "failed",
                 "nomor_rangka": None,
                 "details": None,
@@ -307,7 +316,7 @@ def run_batch_processing(batch_directory: str, pipeline_path: PaddleOCR, candida
 
     total_duration = time.time() - start_total_time
 
-    final_report = {
+    return {
         "status": "completed",
         "message": f"Proses batch selesai. {success_count} berhasil, {fail_count} gagal.",
         "summary": {
@@ -315,9 +324,7 @@ def run_batch_processing(batch_directory: str, pipeline_path: PaddleOCR, candida
             "success_count": success_count,
             "fail_count": fail_count,
             "total_duration_seconds": round(total_duration, 2),
-            "average_duration_per_image_seconds": round(total_duration / len(image_paths), 2) if image_paths else 0
+            "average_duration_per_image_seconds": round(total_duration / len(image_paths), 2)
         },
         "results": all_results
     }
-
-    return final_report
