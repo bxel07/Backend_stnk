@@ -1221,36 +1221,40 @@ async def save_data_stnk(request: STNKSaveRequest, current_user: dict = Depends(
         nama_brand = None
         nama_pt = None
         final_kode_samsat = None
-        
+        final_glbm_samsat_id = None
+
         print(f"Mencari data untuk nomor rangka: {nomor_rangka_clean}")
         
         try:
-            # Query ke master_excel untuk mendapatkan data berdasarkan nomor rangka
             master_excel_query = text("""
                 SELECT merk, nama_pt, kode_samsat
                 FROM master_excel 
                 WHERE norangka = :nomor_rangka
                 LIMIT 1
             """)
-            
             master_result = db.execute(master_excel_query, {"nomor_rangka": nomor_rangka_clean}).fetchone()
-            
+
             if master_result:
-                # Jika ditemukan di master_excel, gunakan data tersebut
                 nama_brand = master_result[0] or None
                 nama_pt = master_result[1] or None
                 final_kode_samsat = master_result[2] or None
-
                 print(f"✅ Data ditemukan di master_excel: brand={nama_brand}, pt={nama_pt}, samsat={final_kode_samsat}")
             else:
-                print("❌ Data tidak ditemukan di master_excel, menggunakan metode fallback")
-                
+                print("❌ Data tidak ditemukan di master_excel")
         except Exception as e:
             print(f"❌ Error query master_excel: {str(e)}")
-            
-                    
-        # Debug info
-        print(f"📊 Final values: brand={nama_brand}, pt={nama_pt}, samsat={final_kode_samsat}")
+
+        # Cari glbm_samsat_id dari kode_samsat
+        if final_kode_samsat:
+            try:
+                samsat = db.query(glbm_samsat).filter(glbm_samsat.kode == final_kode_samsat).first()
+                if samsat:
+                    final_glbm_samsat_id = samsat.id
+                    print(f"✅ glbm_samsat ditemukan: ID={final_glbm_samsat_id}")
+                else:
+                    print(f"⚠️ Tidak ada glbm_samsat dengan kode: {final_kode_samsat}")
+            except Exception as e:
+                print(f"❌ Error saat mencari glbm_samsat_id: {str(e)}")
 
         # Rename file
         old_path = request.path
@@ -1267,22 +1271,18 @@ async def save_data_stnk(request: STNKSaveRequest, current_user: dict = Depends(
                 print(f"[WARNING] File tidak ditemukan: {old_path}")
         except Exception as e:
             print(f"[ERROR] Gagal mengganti nama file: {e}")
-            # Lanjutkan proses meskipun gagal rename file
             new_path = old_path
             new_filename = request.filename
 
-        # Ambil jumlah dari detail (jika ada)
         jumlah_value = request.details.jumlah if request.details else None
-
-        # Dapatkan user_id
         user_id = int(current_user.get("sub"))
 
-        # Simpan ke database
         stnk_entry = STNKData(
             file=new_filename,
             path=new_path,
             user_id=user_id,
             kode_samsat=final_kode_samsat,
+            glbm_samsat_id=final_glbm_samsat_id,
             nomor_rangka=nomor_rangka_clean,
             jumlah=jumlah_value,
             nama_pt=nama_pt,
@@ -1302,6 +1302,7 @@ async def save_data_stnk(request: STNKSaveRequest, current_user: dict = Depends(
                 "nomor_rangka": stnk_entry.nomor_rangka,
                 "jumlah": stnk_entry.jumlah,
                 "kode_samsat": stnk_entry.kode_samsat,
+                "glbm_samsat_id": stnk_entry.glbm_samsat_id,
                 "user_id": stnk_entry.user_id,
                 "nama_pt": stnk_entry.nama_pt,
                 "nama_brand": stnk_entry.nama_brand,
