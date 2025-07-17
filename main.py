@@ -125,7 +125,7 @@ app.add_middleware(
 # pipeline = create_pipeline(pipeline="OCR")
 'IMPORT TAMBAHAN'
 from fastapi import FastAPI, HTTPException, Depends
-from app.db.model import User, STNKData, STNKFieldCorrection, stpm_orlap, glbm_samsat, glbm_wilayah_cakupan , glbm_wilayah , Detail_otorirasi_samsat, otorirasi_samsat,RoleEnum,Role,glbm_brand,glbm_pt,master_excel
+from app.db.model import User, STNKData, STNKFieldCorrection, stpm_orlap, glbm_samsat, glbm_wilayah_cakupan , glbm_wilayah , Detail_otorisasi_samsat, otorisasi_samsat,RoleEnum,Role,glbm_brand,glbm_pt,master_excel
 from app.db.database import engine
 Base.metadata.create_all(bind=engine)  # Ganti path sesuai tempat kamu menyimpan enum-nya
 from app.utils.auth import create_access_token
@@ -134,63 +134,57 @@ from app.middleware.login import LoginMiddleware
 app.add_middleware(LoginMiddleware)
 from app.utils.auth import require_role
 from app.db.database import get_db
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session, joinedload
 from app.utils.auth import get_current_user 
 import pandas as pd
+from pytz import timezone
+from datetime import datetime
+
+JAKARTA_TZ = timezone("Asia/Jakarta")
+
+
 
 
 
 
 
 # Function untuk mengembalikan semua user
-def get_all_users():
-    db = SessionLocal()
-    try:
-        users = db.query(User).all()
-        result = []
-
-        for user in users:
-            user_data = {
-                "id": user.id,
-                "username": user.username,
-                "gmail": user.gmail,
-                "role": user.role.role if user.role else None,
-                "otorisasi": []
-            }
-
-            # Ambil semua otorisasi user
-            otorisasi_list = db.query(otorirasi_samsat).filter(
-                otorirasi_samsat.user_id == user.id
-            ).all()
-
-            for otor in otorisasi_list:
-                detail = db.query(Detail_otorirasi_samsat).filter(
-                    Detail_otorirasi_samsat.id == otor.detail_otorirasi_samsat_id
-                ).first()
-
-                if not detail:
-                    continue
-
-                user_data["otorisasi"].append({
-                    "brand_id": detail.glbm_brand_id,
-                    "pt_id": detail.glbm_pt_id,
-                    "samsat_id": detail.glbm_samsat_id,
-                    "wilayah_id": detail.wilayah_id,
-                    "wilayah_cakupan_id": detail.wilayah_cakupan_id
-                })
-
-            result.append(user_data)
-
-        return result
-    finally:
-        db.close()
-
-
-# Endpoint untuk mengirim hasil function dictionary
 @app.get("/users")
-def read_users(current_user=Depends(require_role(RoleEnum.CAO,RoleEnum.ADMIN, RoleEnum.SUPERADMIN))):
-    return {"data": get_all_users()}
+def get_all_users(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role(RoleEnum.CAO, RoleEnum.ADMIN, RoleEnum.SUPERADMIN))
+):
+    users = db.query(User).all()
+    result = []
+
+    for user in users:
+        all_detail = []
+        for otorisasi in user.otorisasi_samsat:
+            all_detail.extend(otorisasi.detail_otorisasi_samsat)
+
+        brand_ids = list({d.glbm_brand_id for d in all_detail})
+        pt_ids = list({d.glbm_pt_id for d in all_detail})
+        samsat_ids = list({d.glbm_samsat_id for d in all_detail})
+
+        result.append({
+            "id": user.id,
+            "username": user.username,
+            "gmail": user.gmail,
+            "role": user.role.role if user.role else None,
+            "brand_ids": brand_ids,
+            "pt_id": pt_ids[0] if pt_ids else None,
+            "samsat_id": samsat_ids[0] if samsat_ids else None,
+            "otorisasi":[
+                {
+                    "pt_id": detail.glbm_pt_id,
+                    "brand_id": detail.glbm_brand_id,
+                }
+                for detail in all_detail
+            ]
+        })
+
+    return {"data": result}
 
 
 @app.get("/roles")
@@ -243,126 +237,101 @@ def get_db():
 
 class RegisterData(BaseModel):
     username: str
-    gmail: str
+    gmail: EmailStr
     password: str
     role_id: int
     nama_lengkap: str
     nomor_telepon: str
-    glbm_brand_ids: Optional[List[int]] = None # ⬅️ List brand
-    glbm_pt_id:Optional [int] = None # ⬅️ ID PT
-    glbm_samsat_id: int 
+    glbm_brand_ids: Optional[List[int]] = []
+    glbm_pt_id: Optional[List[int]] = []
+    glbm_samsat_id: int
 
 
 @app.post("/register")
 def register(data: RegisterData, db: Session = Depends(get_db)):
-    # Validasi awal: field wajib
-    missing_fields = []
-    for field in ["username", "gmail", "password", "role_id", "nama_lengkap", "nomor_telepon"]:
-        if not getattr(data, field):
-            missing_fields.append(field)
-
-    if missing_fields:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Field berikut wajib diisi: {', '.join(missing_fields)}"
-        )
-
-    # Cek username & gmail unik
+    # 1. Validasi username & gmail
     if db.query(User).filter(User.username == data.username).first():
         raise HTTPException(status_code=400, detail="Username sudah terdaftar")
     if db.query(User).filter(User.gmail == data.gmail).first():
         raise HTTPException(status_code=400, detail="Gmail sudah terdaftar")
 
-    # Cek role
-    role = db.query(Role).filter(Role.id == data.role_id).first()
-    if not role:
-        raise HTTPException(status_code=404, detail="Role tidak ditemukan")
-
-    # Mulai transaksi DB
     try:
-        # Buat data orlap
-        new_orlap = stpm_orlap(
+        # 2. Simpan biodata
+        biodata = stpm_orlap(
             nama_lengkap=data.nama_lengkap,
             nomor_telepon=data.nomor_telepon
         )
-        db.add(new_orlap)
-        db.flush()
+        db.add(biodata)
+        db.flush()  # untuk dapatkan biodata.id
 
-        # Buat user
-        new_user = User(
+        # 3. Simpan user
+        user = User(
             username=data.username,
+            hashed_password=data.password,  # 🔒 pastikan ini di-hash di real-case
             gmail=data.gmail,
-            hashed_password=data.password,
-            role_id=role.id,
-            stpm_orlap_id=new_orlap.id
+            role_id=data.role_id,
+            stpm_orlap_id=biodata.id
         )
-        db.add(new_user)
-        db.flush()
+        db.add(user)
+        db.flush()  # untuk dapatkan user.id
 
-        otorisasi_list = []
+        # 4. Simpan otorisasi_samsat
+        otorisasi = otorisasi_samsat(
+            user_id=user.id,
+            created_at=datetime.now(JAKARTA_TZ),
+            updated_at=datetime.now(JAKARTA_TZ)
+        )
+        db.add(otorisasi)
+        db.flush()  # untuk dapatkan otorisasi.id
 
-        # Jika data otorisasi tersedia → proses
-        if data.glbm_samsat_id and data.glbm_brand_ids and data.glbm_pt_id:
-            samsat = db.query(glbm_samsat).filter(glbm_samsat.id == data.glbm_samsat_id).first()
-            if not samsat:
-                raise HTTPException(status_code=404, detail="Samsat tidak ditemukan")
+        # 5. Ambil data wilayah dari glbm_samsat
+        samsat = db.query(glbm_samsat).filter(glbm_samsat.id == data.glbm_samsat_id).first()
+        if not samsat:
+            raise HTTPException(status_code=400, detail="Samsat tidak ditemukan")
 
-            wilayah_cakupan_id = samsat.wilayah_cakupan_id
-            wilayah_id = samsat.wilayah_id
+        wilayah_id = samsat.wilayah_id
+        wilayah_cakupan_id = samsat.wilayah_cakupan_id
 
+        # 6. Simpan detail otorisasi
+        if data.glbm_brand_ids:
             for brand_id in data.glbm_brand_ids:
-                detail = Detail_otorirasi_samsat(
+                detail = Detail_otorisasi_samsat(
                     glbm_samsat_id=data.glbm_samsat_id,
-                    glbm_brand_id=brand_id,
-                    glbm_pt_id=data.glbm_pt_id,
+                    wilayah_id=wilayah_id,
                     wilayah_cakupan_id=wilayah_cakupan_id,
-                    wilayah_id=wilayah_id
+                    glbm_brand_id=brand_id if brand_id else None,
+                    glbm_pt_id=data.glbm_pt_id[0] if data.glbm_pt_id else None,
+                    otorisasi_samsat_id=otorisasi.id
                 )
                 db.add(detail)
-                db.flush()
-
-                otorisasi = otorirasi_samsat(
-                    user_id=new_user.id,
-                    detail_otorirasi_samsat_id=detail.id
-                )
-                db.add(otorisasi)
-                db.flush()
-
-                otorisasi_list.append({
-                    "detail_otorirasi_samsat_id": detail.id,
-                    "glbm_samsat_id": data.glbm_samsat_id,
-                    "glbm_brand_id": brand_id,
-                    "glbm_pt_id": data.glbm_pt_id
-                })
+        else:
+            # jika brand kosong → tetap simpan satu entri (brand NULL)
+            detail = Detail_otorisasi_samsat(
+                glbm_samsat_id=data.glbm_samsat_id,
+                wilayah_id=wilayah_id,
+                wilayah_cakupan_id=wilayah_cakupan_id,
+                glbm_brand_id=None ,
+                glbm_pt_id=data.glbm_pt_id[0] if data.glbm_pt_id else None,
+                otorisasi_samsat_id=otorisasi.id
+            )
+            db.add(detail)
 
         db.commit()
-
-        return {
-            "message": "Registrasi berhasil",
-            "user": {
-                "id": new_user.id,
-                "username": new_user.username,
-                "gmail": new_user.gmail,
-                "role": role.role.value,
-                "nama_lengkap": new_orlap.nama_lengkap,
-                "nomor_telepon": new_orlap.nomor_telepon
-            },
-            "otorisasi": otorisasi_list if otorisasi_list else None
-        }
+        return {"message": "Registrasi berhasil"}
 
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Registrasi gagal: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Registrasi gagal: {e}")
 
-class OtorisasiItem(BaseModel):
-    brand_id: int
-    pt_id: int
+class otorisasiUpdate(BaseModel):
+    brand_id: Optional[int] = None
+    pt_id: Optional[int] = None
 
 class UpdateUserData(BaseModel):
-    username: Optional[str] = None
-    gmail: Optional[EmailStr] = None
-    role_id: Optional[int] = None
-    otorisasi: Optional[List[OtorisasiItem]] = None
+    username: Optional[str]
+    gmail: Optional[str]
+    role_id: Optional[int]
+    otorisasi: Optional[List[otorisasiUpdate]]
 
 @app.put("/update-user/{user_id}")
 def update_user(
@@ -372,6 +341,7 @@ def update_user(
     current_user=Depends(require_role(RoleEnum.ADMIN, RoleEnum.SUPERADMIN))
 ):
     try:
+        # Cari user
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="User tidak ditemukan")
@@ -387,26 +357,31 @@ def update_user(
                 raise HTTPException(status_code=404, detail="Role tidak ditemukan")
             user.role_id = role.id
 
-        # === Update Otorisasi: brand & pt ===
+        # === Update otorisasi: brand & pt ===
         if data.otorisasi:
-            otorisasi_list = db.query(otorirasi_samsat).filter(
-                otorirasi_samsat.user_id == user.id
+            # Ambil semua otorisasi milik user
+            otorisasi_list = db.query(otorisasi_samsat).filter(
+                otorisasi_samsat.user_id == user.id
             ).all()
 
-            for i, otor in enumerate(otorisasi_list):
-                detail = db.query(Detail_otorirasi_samsat).filter(
-                    Detail_otorirasi_samsat.id == otor.detail_otorirasi_samsat_id
-                ).first()
+            detail_index = 0
 
-                if not detail or i >= len(data.otorisasi):
-                    continue
+            for otor in otorisasi_list:
+                detail_list = db.query(Detail_otorisasi_samsat).filter(
+                    Detail_otorisasi_samsat.otorisasi_samsat_id == otor.id
+                ).all()
 
-                otor_data = data.otorisasi[i]
+                for detail in detail_list:
+                    if detail_index >= len(data.otorisasi):
+                        break  # kalau input lebih sedikit dari jumlah detail
+                    otor_data = data.otorisasi[detail_index]
 
-                detail.glbm_brand_id = otor_data.brand_id
-                detail.glbm_pt_id = otor_data.pt_id
+                    # Update brand & pt
+                    detail.glbm_brand_id = otor_data.brand_id
+                    detail.glbm_pt_id = otor_data.pt_id
 
-                db.add(detail)
+                    db.add(detail)
+                    detail_index += 1
 
         db.commit()
         db.refresh(user)
@@ -427,29 +402,48 @@ def update_user(
         raise HTTPException(status_code=500, detail="Terjadi kesalahan saat memperbarui user")
 
 @app.get("/user-profile")
-def get_user_profile(
-    current_user : dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    try:
-        user_id = int(current_user.get("sub"))  # Ambil user_id dari token
-        user = db.query(User).filter(User.id == user_id).first()
+def get_user_profile(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    user_id = int(current_user["sub"])
 
-        if not user:
-            raise HTTPException(status_code=404, detail="User tidak ditemukan")
+    # Ambil user dan relasinya
+    user = db.query(User).options(
+        joinedload(User.role),
+        joinedload(User.stpm_orlap)
+    ).filter(User.id == user_id).first()
 
-        return {
-            "id": user.id,
-            "username": user.username,
-            "gmail": user.gmail,
-            "nama_lengkap": user.stpm_orlap.nama_lengkap,
-            "nomor_telepon": user.stpm_orlap.nomor_telepon,
-            "role": user.role.role.value
-        }
-    except Exception as e:
-        print("ERROR GET USER PROFILE:", str(e))
-        raise HTTPException(status_code=500, detail="Terjadi kesalahan saat mengambil profil user")
+    if not user:
+        raise HTTPException(status_code=404, detail="User tidak ditemukan")
 
+    profile = {
+        "id": user.id,
+        "username": user.username,
+        "gmail": user.gmail,
+        "role": user.role.role if user.role else None,
+        "nama_lengkap": user.stpm_orlap.nama_lengkap if user.stpm_orlap else None,
+        "nomor_telepon": user.stpm_orlap.nomor_telepon if user.stpm_orlap else None,
+        "otorisasi": []
+    }
+
+    # Ambil otorisasi
+    otorisasi_list = db.query(Detail_otorisasi_samsat).join(otorisasi_samsat).filter(
+        otorisasi_samsat.user_id == user.id
+    ).all()
+
+    for detail in otorisasi_list:
+        samsat = db.query(glbm_samsat).filter(glbm_samsat.id == detail.glbm_samsat_id).first()
+        brand = db.query(glbm_brand).filter(glbm_brand.id == detail.glbm_brand_id).first()
+        pt = db.query(glbm_pt).filter(glbm_pt.id == detail.glbm_pt_id).first()
+
+        profile["otorisasi"].append({
+            "samsat_id": samsat.id if samsat else None,
+            "samsat_nama": samsat.nama_samsat if samsat else None,
+            "pt_id": pt.id if pt else None,
+            "pt_nama": pt.nama_pt if pt else None,
+            "brand_id": brand.id if brand else None,
+            "brand_nama": brand.nama_brand if brand else None
+        })
+
+    return profile
 class UpdateUserProfile(BaseModel):
     password: Optional[str] = None
 
@@ -578,8 +572,8 @@ def add_glbm_samsat(
         return {"status": "error", "message": str(e)}
 
 
-@app.get("/detail-otorirasi-samsat")
-def get_detail_otorirasi_samsat(
+@app.get("/detail-otorisasi-samsat")
+def get_detail_otorisasi_samsat(
     db: Session = Depends(get_db),
     current_user=Depends(require_role(RoleEnum.CAO, RoleEnum.ADMIN, RoleEnum.SUPERADMIN))
 ):
@@ -587,7 +581,7 @@ def get_detail_otorirasi_samsat(
         # Ambil seluruh data cakupan wilayah beserta relasinya
         cakupan_list = db.query(glbm_wilayah_cakupan).options(
             joinedload(glbm_wilayah_cakupan.wilayah),
-            joinedload(glbm_wilayah_cakupan.detail_otorirasi_samsat).joinedload(Detail_otorirasi_samsat.glbm_samsat)
+            joinedload(glbm_wilayah_cakupan.detail_otorisasi_samsat).joinedload(Detail_otorisasi_samsat.glbm_samsat)
         ).all()
 
         data = []
@@ -597,13 +591,13 @@ def get_detail_otorirasi_samsat(
                 "id_wilayah_cakupan": cakupan.id,
                 "nama_wilayah_cakupan": cakupan.nama_wilayah,
                 "wilayah_induk": wilayah.nama_wilayah if wilayah else None,
-                "detail_otorirasi_samsat": [
+                "detail_otorisasi_samsat": [
                     {
                         "id": d.id,
                         "glbm_samsat_id": d.glbm_samsat_id,
                         "glbm_samsat_nama": d.glbm_samsat.nama_samsat if d.glbm_samsat else None,
                     }
-                    for d in cakupan.detail_otorirasi_samsat
+                    for d in cakupan.detail_otorisasi_samsat
                 ]
             })
 
@@ -613,24 +607,24 @@ def get_detail_otorirasi_samsat(
         return {"status": "error", "message": str(e)}
 
 
-@app.get("/otorirasi-samsat")
-def get_otorirasi_samsat(
+@app.get("/otorisasi-samsat")
+def get_otorisasi_samsat(
     db: Session = Depends(get_db),
     current_user=Depends(require_role(RoleEnum.CAO, RoleEnum.ADMIN, RoleEnum.SUPERADMIN))
 ):
     try:
-        otorisasi_list = db.query(otorirasi_samsat).options(
-            joinedload(otorirasi_samsat.user),
-            joinedload(otorirasi_samsat.detail_otorirasi_samsat)
-                .joinedload(Detail_otorirasi_samsat.glbm_samsat),
-            joinedload(otorirasi_samsat.detail_otorirasi_samsat)
-                .joinedload(Detail_otorirasi_samsat.detail_wilayah_cakupan)
+        otorisasi_list = db.query(otorisasi_samsat).options(
+            joinedload(otorisasi_samsat.user),
+            joinedload(otorisasi_samsat.detail_otorisasi_samsat)
+                .joinedload(Detail_otorisasi_samsat.glbm_samsat),
+            joinedload(otorisasi_samsat.detail_otorisasi_samsat)
+                .joinedload(Detail_otorisasi_samsat.detail_wilayah_cakupan)
                 .joinedload(glbm_wilayah_cakupan.wilayah)
         ).all()
 
         data = []
         for item in otorisasi_list:
-            detail = item.detail_otorirasi_samsat
+            detail = item.detail_otorisasi_samsat
             samsat = detail.glbm_samsat if detail else None
             wilayah = detail.detail_wilayah_cakupan if detail else None
             user = item.user
@@ -656,14 +650,14 @@ def get_otorirasi_samsat(
         return {"status": "error", "message": str(e)}
 
 
-class OtorisasiRequest(BaseModel):
+class otorisasiRequest(BaseModel):
     user_id: int
-    detail_otorirasi_samsat_id: Optional[int] = None
-    detail_otorirasi_samsat_ids: Optional[List[int]] = None
+    detail_otorisasi_samsat_id: Optional[int] = None
+    detail_otorisasi_samsat_ids: Optional[List[int]] = None
 
 @app.post("/add-otorisasi-samsat")
 def add_otorisasi_samsat(
-    request: OtorisasiRequest,
+    request: otorisasiRequest,
     db: Session = Depends(get_db),
     current_user=Depends(require_role(RoleEnum.ADMIN, RoleEnum.CAO, RoleEnum.SUPERADMIN))
 ):
@@ -672,23 +666,23 @@ def add_otorisasi_samsat(
         raise HTTPException(status_code=404, detail="User tidak ditemukan")
 
     # Mode Multiple
-    if request.detail_otorirasi_samsat_ids:
+    if request.detail_otorisasi_samsat_ids:
         results = []
-        for detail_id in request.detail_otorirasi_samsat_ids:
-            detail = db.query(Detail_otorirasi_samsat).filter_by(id=detail_id).first()
+        for detail_id in request.detail_otorisasi_samsat_ids:
+            detail = db.query(Detail_otorisasi_samsat).filter_by(id=detail_id).first()
             if not detail:
                 continue  # Lewatkan kalau tidak ditemukan
 
-            existing = db.query(otorirasi_samsat).filter_by(
+            existing = db.query(otorisasi_samsat).filter_by(
                 user_id=request.user_id,
-                detail_otorirasi_samsat_id=detail_id
+                detail_otorisasi_samsat_id=detail_id
             ).first()
             if existing:
                 continue
 
-            new_otorisasi = otorirasi_samsat(
+            new_otorisasi = otorisasi_samsat(
                 user_id=request.user_id,
-                detail_otorirasi_samsat_id=detail_id
+                detail_otorisasi_samsat_id=detail_id
             )
             db.add(new_otorisasi)
             db.commit()
@@ -696,7 +690,7 @@ def add_otorisasi_samsat(
 
             results.append({
                 "user_id": new_otorisasi.user_id,
-                "detail_otorirasi_samsat_id": new_otorisasi.detail_otorirasi_samsat_id
+                "detail_otorisasi_samsat_id": new_otorisasi.detail_otorisasi_samsat_id
             })
 
         return {
@@ -706,14 +700,14 @@ def add_otorisasi_samsat(
         }
 
     # Mode Single
-    elif request.detail_otorirasi_samsat_id:
-        detail = db.query(Detail_otorirasi_samsat).filter_by(id=request.detail_otorirasi_samsat_id).first()
+    elif request.detail_otorisasi_samsat_id:
+        detail = db.query(Detail_otorisasi_samsat).filter_by(id=request.detail_otorisasi_samsat_id).first()
         if not detail:
             raise HTTPException(status_code=404, detail="Detail otorisasi tidak ditemukan")
 
-        existing = db.query(otorirasi_samsat).filter_by(
+        existing = db.query(otorisasi_samsat).filter_by(
             user_id=request.user_id,
-            detail_otorirasi_samsat_id=request.detail_otorirasi_samsat_id
+            detail_otorisasi_samsat_id=request.detail_otorisasi_samsat_id
         ).first()
         if existing:
             return {
@@ -721,9 +715,9 @@ def add_otorisasi_samsat(
                 "message": "User sudah memiliki otorisasi ini"
             }
 
-        new_otorisasi = otorirasi_samsat(
+        new_otorisasi = otorisasi_samsat(
             user_id=request.user_id,
-            detail_otorirasi_samsat_id=request.detail_otorirasi_samsat_id
+            detail_otorisasi_samsat_id=request.detail_otorisasi_samsat_id
         )
         db.add(new_otorisasi)
         db.commit()
@@ -731,10 +725,10 @@ def add_otorisasi_samsat(
 
         return {
             "status": "success",
-            "message": "Otorisasi berhasil ditambahkan",
+            "message": "otorisasi berhasil ditambahkan",
             "data": {
                 "user_id": new_otorisasi.user_id,
-                "detail_otorirasi_samsat_id": new_otorisasi.detail_otorirasi_samsat_id
+                "detail_otorisasi_samsat_id": new_otorisasi.detail_otorisasi_samsat_id
             }
         }
 
@@ -742,7 +736,7 @@ def add_otorisasi_samsat(
     else:
         raise HTTPException(
             status_code=400,
-            detail="Harus menyertakan salah satu dari 'detail_otorirasi_samsat_id' atau 'detail_otorirasi_samsat_ids'"
+            detail="Harus menyertakan salah satu dari 'detail_otorisasi_samsat_id' atau 'detail_otorisasi_samsat_ids'"
         )
 
 @app.get("/wilayah")
@@ -949,26 +943,29 @@ def read_root():
 
 
     db.close()
+
 @app.get("/stnk-data/")
-def get_all_stnk_data(current_user: dict = Depends(get_current_user)):    
-    db = SessionLocal()
+def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
+    db: Session = SessionLocal()
     try:
         role = current_user.get("role")
-        user_id = int(current_user.get("sub"))  # user_id dari token
-
+        user_id = int(current_user.get("sub"))  # ID user dari token
         query = db.query(STNKData)
 
         if role == "superadmin":
             stnk_entries = query.all()
 
         elif role == "cao":
-            otorisasi_query = db.query(Detail_otorirasi_samsat).join(otorirasi_samsat).filter(
-                otorirasi_samsat.user_id == user_id
-            )
+            otorisasi_rows = db.query(Detail_otorisasi_samsat).options(
+                joinedload(Detail_otorisasi_samsat.glbm_brand),
+                joinedload(Detail_otorisasi_samsat.glbm_pt)
+            ).join(otorisasi_samsat).filter(
+                otorisasi_samsat.user_id == user_id
+            ).all()
 
-            wilayah_cakupan_ids = [row.wilayah_cakupan_id for row in otorisasi_query]
-            brand_names = [row.glbm_brand.nama_brand for row in otorisasi_query if row.glbm_brand]
-            pt_names = [row.glbm_pt.nama_pt for row in otorisasi_query if row.glbm_pt]
+            wilayah_cakupan_ids = [row.wilayah_cakupan_id for row in otorisasi_rows]
+            brand_names = [row.glbm_brand.nama_brand for row in otorisasi_rows if row.glbm_brand]
+            pt_names = [row.glbm_pt.nama_pt for row in otorisasi_rows if row.glbm_pt]
 
             samsat_ids = db.query(glbm_samsat.id).filter(
                 glbm_samsat.wilayah_cakupan_id.in_(wilayah_cakupan_ids)
@@ -984,12 +981,14 @@ def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
             stnk_entries = query.filter(*filters).all()
 
         elif role == "admin":
-            otorisasi_query = db.query(Detail_otorirasi_samsat).join(otorirasi_samsat).filter(
-                otorirasi_samsat.user_id == user_id
-            )
+            otorisasi_rows = db.query(Detail_otorisasi_samsat).options(
+                joinedload(Detail_otorisasi_samsat.glbm_pt)
+            ).join(otorisasi_samsat).filter(
+                otorisasi_samsat.user_id == user_id
+            ).all()
 
-            wilayah_ids = [row.wilayah_id for row in otorisasi_query]
-            pt_names = [row.glbm_pt.nama_pt for row in otorisasi_query if row.glbm_pt]
+            wilayah_ids = [row.wilayah_id for row in otorisasi_rows]
+            pt_names = [row.glbm_pt.nama_pt for row in otorisasi_rows if row.glbm_pt]
 
             samsat_ids = db.query(glbm_samsat.id).filter(
                 glbm_samsat.wilayah_id.in_(wilayah_ids)
@@ -1111,10 +1110,12 @@ class STNKSaveRequest(BaseModel):
 # =============================================================================
 # ENDPOINT API TERINTEGRASI
 # =============================================================================
+
 @app.post("/upload-stnk-batch/")
 async def upload_stnk_batch(
-    files: List[UploadFile] = File(..., description="Unggah hingga 10 gambar STNK untuk diproses.")):
-
+    files: List[UploadFile] = File(..., description="Unggah hingga 10 gambar STNK untuk diproses."),
+    db: Session = Depends(get_db)  # ✅ Inject DB session di sini
+):
     """
     Endpoint terintegrasi yang melakukan:
     1. Menerima unggahan batch gambar (maksimal 10 file).
@@ -1150,7 +1151,7 @@ async def upload_stnk_batch(
         # fungsi 'process_batch_images' yang blocking di thread pool.
         # 'await' menunggu hasilnya tanpa memblokir event-loop utama.
         processing_results = await run_in_threadpool(
-            partial(run_batch_processing, batch_directory=batch_dir, pipeline_path=ml_models["ocr_model"], candidate_count=10)
+            partial(run_batch_processing, batch_directory=batch_dir, pipeline_path=ml_models["ocr_model"], candidate_count=10, db=db)
         )
 
         # all_norangka= {row.norangka for row in db.query(master_excel.norangka).all()}
@@ -1180,7 +1181,6 @@ async def upload_stnk_batch(
         if os.path.exists(batch_dir):
             # shutil.rmtree(batch_dir)
             print(f"INFO: Direktori sementara '{batch_dir}' telah berhasil dihapus.")
-
 class STNKDetail(BaseModel):
     jumlah: Optional[int] = None
 
@@ -1188,14 +1188,15 @@ class STNKSaveRequest(BaseModel):
     nomor_rangka: str
     filename: str
     path: str
-    kode_samsat: Optional[str] = None  # ✅ Tambahkan ini
+    kode_samsat: Optional[str] = None
+    glbm_samsat_id: Optional[int] = None  # Tambahkan ini untuk kompatibilitas
     details: Optional[STNKDetail] = None
-
 
 from sqlalchemy import text
 
+
 @app.post("/save-stnk-data/")
-async def save_data_stnk(request: STNKSaveRequest,current_user: dict = Depends(get_current_user)):
+async def save_data_stnk(request: STNKSaveRequest, current_user: dict = Depends(get_current_user)):
     db: Session = SessionLocal()
 
     try:
@@ -1204,9 +1205,11 @@ async def save_data_stnk(request: STNKSaveRequest,current_user: dict = Depends(g
         if not request.nomor_rangka or request.nomor_rangka.strip() in ["", "-"]:
             raise HTTPException(status_code=400, detail="Nomor rangka tidak boleh kosong")
 
+        nomor_rangka_clean = request.nomor_rangka.strip()
+
         # Cek apakah nomor rangka sudah ada
         existing = db.query(STNKData).filter(
-            STNKData.nomor_rangka == request.nomor_rangka.strip()
+            STNKData.nomor_rangka == nomor_rangka_clean
         ).first()
         if existing:
             return {
@@ -1214,66 +1217,73 @@ async def save_data_stnk(request: STNKSaveRequest,current_user: dict = Depends(g
                 "message": "Nomor rangka sudah ada di database"
             }
 
-        # Cari samsat berdasarkan kode_samsat
-        samsat = None
-        glbm_samsat_id = None
+        # PRIORITAS 1: Cari dari master_excel berdasarkan nomor rangka
+        nama_brand = None
+        nama_pt = None
         final_kode_samsat = None
-        if request.kode_samsat:
-            samsat = db.query(glbm_samsat).filter(glbm_samsat.kode_samsat == request.kode_samsat.strip()).first()
-            if samsat:
-                glbm_samsat_id = samsat.id
-                final_kode_samsat = samsat.kode_samsat
+        final_glbm_samsat_id = None
+
+        print(f"Mencari data untuk nomor rangka: {nomor_rangka_clean}")
+        
+        try:
+            master_excel_query = text("""
+                SELECT merk, nama_pt, kode_samsat
+                FROM master_excel 
+                WHERE norangka = :nomor_rangka
+                LIMIT 1
+            """)
+            master_result = db.execute(master_excel_query, {"nomor_rangka": nomor_rangka_clean}).fetchone()
+
+            if master_result:
+                nama_brand = master_result[0] or None
+                nama_pt = master_result[1] or None
+                final_kode_samsat = master_result[2] or None
+                print(f"✅ Data ditemukan di master_excel: brand={nama_brand}, pt={nama_pt}, samsat={final_kode_samsat}")
             else:
-                final_kode_samsat = None  # invalid -> null
-                glbm_samsat_id = None
+                print("❌ Data tidak ditemukan di master_excel")
+        except Exception as e:
+            print(f"❌ Error query master_excel: {str(e)}")
+
+        # Cari glbm_samsat_id dari kode_samsat
+        if final_kode_samsat:
+            try:
+                samsat = db.query(glbm_samsat).filter(glbm_samsat.kode == final_kode_samsat).first()
+                if samsat:
+                    final_glbm_samsat_id = samsat.id
+                    print(f"✅ glbm_samsat ditemukan: ID={final_glbm_samsat_id}")
+                else:
+                    print(f"⚠️ Tidak ada glbm_samsat dengan kode: {final_kode_samsat}")
+            except Exception as e:
+                print(f"❌ Error saat mencari glbm_samsat_id: {str(e)}")
 
         # Rename file
         old_path = request.path
         old_dir = os.path.dirname(old_path)
         ext = os.path.splitext(request.filename)[1]
-        new_filename = f"{request.nomor_rangka.strip()}{ext}"
+        new_filename = f"{nomor_rangka_clean}{ext}"
         new_path = os.path.join(old_dir, new_filename)
 
         try:
-            os.rename(old_path, new_path)
-            print(f"File renamed from {old_path} to {new_path}")
-        except FileNotFoundError:
-            print(f"[WARNING] File tidak ditemukan: {old_path}")
+            if os.path.exists(old_path):
+                os.rename(old_path, new_path)
+                print(f"File renamed from {old_path} to {new_path}")
+            else:
+                print(f"[WARNING] File tidak ditemukan: {old_path}")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Gagal mengganti nama file: {e}")
+            print(f"[ERROR] Gagal mengganti nama file: {e}")
+            new_path = old_path
+            new_filename = request.filename
 
-        # Ambil jumlah dari detail (jika ada)
         jumlah_value = request.details.jumlah if request.details else None
+        user_id = int(current_user.get("sub"))
 
-        # Ambil nama_brand dan nama_pt via LEFT JOIN dari detail_otorirasi_samsat
-        nama_brand = None
-        nama_pt = None
-
-        if glbm_samsat_id:
-            sql = text("""
-                SELECT 
-                    b.nama_brand, p.nama_pt
-                FROM detail_otorirasi_samsat d
-                LEFT JOIN glbm_brand b ON d.glbm_brand_id = b.id
-                LEFT JOIN glbm_pt p ON d.glbm_pt_id = p.id
-                WHERE d.glbm_samsat_id = :samsat_id
-                LIMIT 1
-            """)
-            result = db.execute(sql, {"samsat_id": glbm_samsat_id}).fetchone()
-            if result:
-                nama_brand = result[0]
-                nama_pt = result[1]
-            
-        user_id=int(current_user.get("sub"))
-
-        # Simpan ke database
         stnk_entry = STNKData(
             file=new_filename,
             path=new_path,
             user_id=user_id,
-            glbm_samsat_id=glbm_samsat_id,  # otomatis
             kode_samsat=final_kode_samsat,
-            nomor_rangka=request.nomor_rangka.strip(),
+            glbm_samsat_id=final_glbm_samsat_id,
+            nomor_rangka=nomor_rangka_clean,
             jumlah=jumlah_value,
             nama_pt=nama_pt,
             nama_brand=nama_brand
@@ -1292,8 +1302,8 @@ async def save_data_stnk(request: STNKSaveRequest,current_user: dict = Depends(g
                 "nomor_rangka": stnk_entry.nomor_rangka,
                 "jumlah": stnk_entry.jumlah,
                 "kode_samsat": stnk_entry.kode_samsat,
-                "user_id": stnk_entry.user_id,
                 "glbm_samsat_id": stnk_entry.glbm_samsat_id,
+                "user_id": stnk_entry.user_id,
                 "nama_pt": stnk_entry.nama_pt,
                 "nama_brand": stnk_entry.nama_brand,
                 "created_at": stnk_entry.created_at
@@ -1308,6 +1318,76 @@ async def save_data_stnk(request: STNKSaveRequest,current_user: dict = Depends(g
         raise HTTPException(status_code=500, detail=f"Error saving data: {str(e)}")
     finally:
         db.close()
+
+        
+@app.post("/register")
+def register(data: RegisterData, db: Session = Depends(get_db)):
+    if db.query(User).filter(User.username == data.username).first():
+        raise HTTPException(status_code=400, detail="Username sudah terdaftar")
+    if db.query(User).filter(User.gmail == data.gmail).first():
+        raise HTTPException(status_code=400, detail="Gmail sudah terdaftar")
+
+    try:
+        # Simpan user
+        user = User(
+            username=data.username,
+            hashed_password=data.password,  # hash dulu di produksi ya
+            gmail=data.gmail,
+            role_id=data.role_id,
+        )
+        db.add(user)
+        db.flush()
+
+        # Simpan biodata
+        biodata = stpm_orlap(
+            nama_lengkap=data.nama_lengkap,
+            nomor_telepon=data.nomor_telepon
+        )
+        db.add(biodata)
+        db.flush()
+
+        # Simpan otorisasi_samsat
+        otorisasi = otorisasi_samsat(
+            user_id=user.id,
+            created_at=datetime.now(JAKARTA_TZ),
+            updated_at=datetime.now(JAKARTA_TZ)
+        )
+        db.add(otorisasi)
+        db.flush()
+
+        # Tambahkan detail otorisasi
+        if data.glbm_brand_ids:
+            for brand_id in data.glbm_brand_ids:
+                detail = Detail_otorisasi_samsat(
+                    glbm_samsat_id=data.glbm_samsat_id,
+                    wilayah_cakupan_id=1,
+                    wilayah_id=1,
+                    glbm_brand_id=brand_id,
+                    glbm_pt_id=data.glbm_pt_id,
+                    otorisasi_samsat_id=otorisasi.id
+                )
+                db.add(detail)
+        else:
+            # Brand kosong, masukkan dengan brand NULL
+            detail = Detail_otorisasi_samsat(
+                glbm_samsat_id=data.glbm_samsat_id,
+                wilayah_cakupan_id=1,
+                wilayah_id=1,
+                glbm_brand_id=None,
+                glbm_pt_id=None,
+                otorisasi_samsat_id=otorisasi.id
+            )
+            db.add(detail)
+
+        db.commit()
+        return {"message": "Registrasi berhasil"}
+
+    except Exception as e:
+        db.rollback()
+        print("❌ Registrasi gagal:", e)
+        raise HTTPException(status_code=400, detail=f"Registrasi gagal: {e}")
+
+
 class UpdateSTNKRequest(BaseModel):
     nomor_rangka: str
     jumlah: int
@@ -1414,39 +1494,121 @@ def get_stnk_data_by_created_date(date: str = Query(..., description="Tanggal da
 
 from io import BytesIO
 
-@app.post("/import-excel")
-async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    try:
-        contents = await file.read()
-        df = pd.read_excel(io.BytesIO(contents))
+# @app.post("/import-excel")
+# async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
+#     try:
+#         contents = await file.read()
+#         df = pd.read_excel(io.BytesIO(contents))
 
+#         records = []
+#         for _, row in df.iterrows():
+#             record = master_excel(
+#                 norangka=row["norangka"],
+#                 nama_stnk=row["nama_stnk"],
+#                 kode_tipe=row["KodeTipe"],
+#                 tipe=row["tipe"],
+#                 kode_model=row["KodeModel"],
+#                 model=row["model"],
+#                 merk=row["merk"],
+#                 kode_samsat=row["kodesamsat"],
+#                 samsat=row["samsat"],
+#                 kode_dealer=str(row["kodedealer"]),  # Pastikan dikonversi ke string
+#                 nama_dealer=row["NamaDealer"],
+#                 kode_group=row["KodeGroup"],
+#                 group_perusahaan=row["groupperusahaan"],
+#                 tgl_mohon_stnk=row["tglmohonstnk"].date() if pd.notna(row["tglmohonstnk"]) else None,
+#                 tgl_simpan=row["TglSimpan"].date() if pd.notna(row["TglSimpan"]) else None,
+#                 nama_pt=row["namaPT"],
+#                 kode_cabang=row["kode_cabang"]
+#             )
+#             records.append(record)
+
+#         db.bulk_save_objects(records)
+#         db.commit()
+
+#         return {"message": f"{len(records)} data berhasil diimpor"}
+
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Gagal mengimpor data: {e}")
+
+from datetime import date 
+class MasterExcelSchema(BaseModel):
+    norangka: str
+    nama_stnk: str
+    kode_tipe: str
+    tipe: str
+    kode_model: str
+    model: str
+    merk: str
+    kode_samsat: str
+    samsat: str
+    kode_dealer: str
+    nama_dealer: str
+    kode_group: str
+    group_perusahaan: str
+    tgl_mohon_stnk: date
+    tgl_simpan: date
+    nama_pt: str
+    kode_cabang: str
+
+
+@app.post("/import-excel")
+async def import_from_json(
+    data: List[MasterExcelSchema],
+    db: Session = Depends(get_db)
+):
+    try:
+        # Ambil semua norangka dari DB
+        existing_norangka_set = {row[0] for row in db.query(master_excel.norangka).all()}
+
+        # Cek duplikat
+        duplikat_norangka = [item.norangka for item in data if item.norangka in existing_norangka_set]
+
+        if duplikat_norangka:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "Import dibatalkan. Terdapat data duplikat.",
+                    "duplikat_norangka": duplikat_norangka
+                }
+            )
+
+        # Simpan semua data jika tidak ada duplikat
         records = []
-        for _, row in df.iterrows():
+        for item in data:
             record = master_excel(
-                norangka=row["norangka"],
-                nama_stnk=row["nama_stnk"],
-                kode_tipe=row["KodeTipe"],
-                tipe=row["tipe"],
-                kode_model=row["KodeModel"],
-                model=row["model"],
-                merk=row["merk"],
-                kode_samsat=row["kodesamsat"],
-                samsat=row["samsat"],
-                kode_dealer=str(row["kodedealer"]),  # Pastikan dikonversi ke string
-                nama_dealer=row["NamaDealer"],
-                kode_group=row["KodeGroup"],
-                group_perusahaan=row["groupperusahaan"],
-                tgl_mohon_stnk=row["tglmohonstnk"].date() if pd.notna(row["tglmohonstnk"]) else None,
-                tgl_simpan=row["TglSimpan"].date() if pd.notna(row["TglSimpan"]) else None,
-                nama_pt=row["namaPT"],
-                kode_cabang=row["kode_cabang"]
+                norangka=item.norangka,
+                nama_stnk=item.nama_stnk,
+                kode_tipe=item.kode_tipe,
+                tipe=item.tipe,
+                kode_model=item.kode_model,
+                model=item.model,
+                merk=item.merk,
+                kode_samsat=item.kode_samsat,
+                samsat=item.samsat,
+                kode_dealer=item.kode_dealer,
+                nama_dealer=item.nama_dealer,
+                kode_group=item.kode_group,
+                group_perusahaan=item.group_perusahaan,
+                tgl_mohon_stnk=item.tgl_mohon_stnk,
+                tgl_simpan=item.tgl_simpan,
+                nama_pt=item.nama_pt,
+                kode_cabang=item.kode_cabang
             )
             records.append(record)
 
         db.bulk_save_objects(records)
         db.commit()
 
-        return {"message": f"{len(records)} data berhasil diimpor"}
+        return {
+            "message": f"{len(records)} data berhasil disimpan dari JSON."
+        }
+
+    except HTTPException as he:
+        raise he
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal mengimpor data: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Gagal menyimpan data dari JSON. Error: {str(e)}"
+        )
