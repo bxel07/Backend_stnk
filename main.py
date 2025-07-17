@@ -324,8 +324,8 @@ def register(data: RegisterData, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=f"Registrasi gagal: {e}")
 
 class otorisasiUpdate(BaseModel):
-    brand_id: int
-    pt_id: int
+    brand_id: Optional[int] = None
+    pt_id: Optional[int] = None
 
 class UpdateUserData(BaseModel):
     username: Optional[str]
@@ -1181,23 +1181,22 @@ async def upload_stnk_batch(
         if os.path.exists(batch_dir):
             # shutil.rmtree(batch_dir)
             print(f"INFO: Direktori sementara '{batch_dir}' telah berhasil dihapus.")
-
 class STNKDetail(BaseModel):
-    jumlah: int
-
+    jumlah: Optional[int] = None
 
 class STNKSaveRequest(BaseModel):
-    nomor_rangka: str = Field(... , min_length=17, max_length=17)
+    nomor_rangka: str
     filename: str
     path: str
-    kode_samsat: Optional[str] = None  # ✅ Tambahkan ini
+    kode_samsat: Optional[str] = None
+    glbm_samsat_id: Optional[int] = None  # Tambahkan ini untuk kompatibilitas
     details: Optional[STNKDetail] = None
 
+from sqlalchemy import text
 
-from sqlalchemy import text 
 
 @app.post("/save-stnk-data/")
-async def save_data_stnk(request: STNKSaveRequest,current_user: dict = Depends(get_current_user)):
+async def save_data_stnk(request: STNKSaveRequest, current_user: dict = Depends(get_current_user)):
     db: Session = SessionLocal()
 
     try:
@@ -1206,9 +1205,11 @@ async def save_data_stnk(request: STNKSaveRequest,current_user: dict = Depends(g
         if not request.nomor_rangka or request.nomor_rangka.strip() in ["", "-"]:
             raise HTTPException(status_code=400, detail="Nomor rangka tidak boleh kosong")
 
+        nomor_rangka_clean = request.nomor_rangka.strip()
+
         # Cek apakah nomor rangka sudah ada
         existing = db.query(STNKData).filter(
-            STNKData.nomor_rangka == request.nomor_rangka.strip()
+            STNKData.nomor_rangka == nomor_rangka_clean
         ).first()
         if existing:
             return {
@@ -1216,66 +1217,73 @@ async def save_data_stnk(request: STNKSaveRequest,current_user: dict = Depends(g
                 "message": "Nomor rangka sudah ada di database"
             }
 
-        # Cari samsat berdasarkan kode_samsat
-        samsat = None
-        glbm_samsat_id = None
+        # PRIORITAS 1: Cari dari master_excel berdasarkan nomor rangka
+        nama_brand = None
+        nama_pt = None
         final_kode_samsat = None
-        if request.kode_samsat:
-            samsat = db.query(glbm_samsat).filter(glbm_samsat.kode_samsat == request.kode_samsat.strip()).first()
-            if samsat:
-                glbm_samsat_id = samsat.id
-                final_kode_samsat = samsat.kode_samsat
+        
+        print(f"Mencari data untuk nomor rangka: {nomor_rangka_clean}")
+        
+        try:
+            # Query ke master_excel untuk mendapatkan data berdasarkan nomor rangka
+            master_excel_query = text("""
+                SELECT merk, nama_pt, kode_samsat
+                FROM master_excel 
+                WHERE norangka = :nomor_rangka
+                LIMIT 1
+            """)
+            
+            master_result = db.execute(master_excel_query, {"nomor_rangka": nomor_rangka_clean}).fetchone()
+            
+            if master_result:
+                # Jika ditemukan di master_excel, gunakan data tersebut
+                nama_brand = master_result[0] or None
+                nama_pt = master_result[1] or None
+                final_kode_samsat = master_result[2] or None
+
+                print(f"✅ Data ditemukan di master_excel: brand={nama_brand}, pt={nama_pt}, samsat={final_kode_samsat}")
             else:
-                final_kode_samsat = None  # invalid -> null
-                glbm_samsat_id = None
+                print("❌ Data tidak ditemukan di master_excel, menggunakan metode fallback")
+                
+        except Exception as e:
+            print(f"❌ Error query master_excel: {str(e)}")
+            
+                    
+        # Debug info
+        print(f"📊 Final values: brand={nama_brand}, pt={nama_pt}, samsat={final_kode_samsat}")
 
         # Rename file
         old_path = request.path
         old_dir = os.path.dirname(old_path)
         ext = os.path.splitext(request.filename)[1]
-        new_filename = f"{request.nomor_rangka.strip()}{ext}"
+        new_filename = f"{nomor_rangka_clean}{ext}"
         new_path = os.path.join(old_dir, new_filename)
 
         try:
-            os.rename(old_path, new_path)
-            print(f"File renamed from {old_path} to {new_path}")
-        except FileNotFoundError:
-            print(f"[WARNING] File tidak ditemukan: {old_path}")
+            if os.path.exists(old_path):
+                os.rename(old_path, new_path)
+                print(f"File renamed from {old_path} to {new_path}")
+            else:
+                print(f"[WARNING] File tidak ditemukan: {old_path}")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Gagal mengganti nama file: {e}")
+            print(f"[ERROR] Gagal mengganti nama file: {e}")
+            # Lanjutkan proses meskipun gagal rename file
+            new_path = old_path
+            new_filename = request.filename
 
         # Ambil jumlah dari detail (jika ada)
         jumlah_value = request.details.jumlah if request.details else None
 
-        # Ambil nama_brand dan nama_pt via LEFT JOIN dari detail_otorirasi_samsat
-        nama_brand = None
-        nama_pt = None
-
-        if glbm_samsat_id:
-            sql = text("""
-                SELECT 
-                    b.nama_brand, p.nama_pt
-                FROM detail_otorirasi_samsat d
-                LEFT JOIN glbm_brand b ON d.glbm_brand_id = b.id
-                LEFT JOIN glbm_pt p ON d.glbm_pt_id = p.id
-                WHERE d.glbm_samsat_id = :samsat_id
-                LIMIT 1
-            """)
-            result = db.execute(sql, {"samsat_id": glbm_samsat_id}).fetchone()
-            if result:
-                nama_brand = result[0]
-                nama_pt = result[1]
-            
-        user_id=int(current_user.get("sub"))
+        # Dapatkan user_id
+        user_id = int(current_user.get("sub"))
 
         # Simpan ke database
         stnk_entry = STNKData(
             file=new_filename,
             path=new_path,
             user_id=user_id,
-            glbm_samsat_id=glbm_samsat_id,  # otomatis
             kode_samsat=final_kode_samsat,
-            nomor_rangka=request.nomor_rangka.strip(),
+            nomor_rangka=nomor_rangka_clean,
             jumlah=jumlah_value,
             nama_pt=nama_pt,
             nama_brand=nama_brand
@@ -1295,7 +1303,6 @@ async def save_data_stnk(request: STNKSaveRequest,current_user: dict = Depends(g
                 "jumlah": stnk_entry.jumlah,
                 "kode_samsat": stnk_entry.kode_samsat,
                 "user_id": stnk_entry.user_id,
-                "glbm_samsat_id": stnk_entry.glbm_samsat_id,
                 "nama_pt": stnk_entry.nama_pt,
                 "nama_brand": stnk_entry.nama_brand,
                 "created_at": stnk_entry.created_at
@@ -1311,6 +1318,7 @@ async def save_data_stnk(request: STNKSaveRequest,current_user: dict = Depends(g
     finally:
         db.close()
 
+        
 @app.post("/register")
 def register(data: RegisterData, db: Session = Depends(get_db)):
     if db.query(User).filter(User.username == data.username).first():
@@ -1485,39 +1493,121 @@ def get_stnk_data_by_created_date(date: str = Query(..., description="Tanggal da
 
 from io import BytesIO
 
-@app.post("/import-excel")
-async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    try:
-        contents = await file.read()
-        df = pd.read_excel(io.BytesIO(contents))
+# @app.post("/import-excel")
+# async def import_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
+#     try:
+#         contents = await file.read()
+#         df = pd.read_excel(io.BytesIO(contents))
 
+#         records = []
+#         for _, row in df.iterrows():
+#             record = master_excel(
+#                 norangka=row["norangka"],
+#                 nama_stnk=row["nama_stnk"],
+#                 kode_tipe=row["KodeTipe"],
+#                 tipe=row["tipe"],
+#                 kode_model=row["KodeModel"],
+#                 model=row["model"],
+#                 merk=row["merk"],
+#                 kode_samsat=row["kodesamsat"],
+#                 samsat=row["samsat"],
+#                 kode_dealer=str(row["kodedealer"]),  # Pastikan dikonversi ke string
+#                 nama_dealer=row["NamaDealer"],
+#                 kode_group=row["KodeGroup"],
+#                 group_perusahaan=row["groupperusahaan"],
+#                 tgl_mohon_stnk=row["tglmohonstnk"].date() if pd.notna(row["tglmohonstnk"]) else None,
+#                 tgl_simpan=row["TglSimpan"].date() if pd.notna(row["TglSimpan"]) else None,
+#                 nama_pt=row["namaPT"],
+#                 kode_cabang=row["kode_cabang"]
+#             )
+#             records.append(record)
+
+#         db.bulk_save_objects(records)
+#         db.commit()
+
+#         return {"message": f"{len(records)} data berhasil diimpor"}
+
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Gagal mengimpor data: {e}")
+
+from datetime import date 
+class MasterExcelSchema(BaseModel):
+    norangka: str
+    nama_stnk: str
+    kode_tipe: str
+    tipe: str
+    kode_model: str
+    model: str
+    merk: str
+    kode_samsat: str
+    samsat: str
+    kode_dealer: str
+    nama_dealer: str
+    kode_group: str
+    group_perusahaan: str
+    tgl_mohon_stnk: date
+    tgl_simpan: date
+    nama_pt: str
+    kode_cabang: str
+
+
+@app.post("/import-excel")
+async def import_from_json(
+    data: List[MasterExcelSchema],
+    db: Session = Depends(get_db)
+):
+    try:
+        # Ambil semua norangka dari DB
+        existing_norangka_set = {row[0] for row in db.query(master_excel.norangka).all()}
+
+        # Cek duplikat
+        duplikat_norangka = [item.norangka for item in data if item.norangka in existing_norangka_set]
+
+        if duplikat_norangka:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "Import dibatalkan. Terdapat data duplikat.",
+                    "duplikat_norangka": duplikat_norangka
+                }
+            )
+
+        # Simpan semua data jika tidak ada duplikat
         records = []
-        for _, row in df.iterrows():
+        for item in data:
             record = master_excel(
-                norangka=row["norangka"],
-                nama_stnk=row["nama_stnk"],
-                kode_tipe=row["KodeTipe"],
-                tipe=row["tipe"],
-                kode_model=row["KodeModel"],
-                model=row["model"],
-                merk=row["merk"],
-                kode_samsat=row["kodesamsat"],
-                samsat=row["samsat"],
-                kode_dealer=str(row["kodedealer"]),  # Pastikan dikonversi ke string
-                nama_dealer=row["NamaDealer"],
-                kode_group=row["KodeGroup"],
-                group_perusahaan=row["groupperusahaan"],
-                tgl_mohon_stnk=row["tglmohonstnk"].date() if pd.notna(row["tglmohonstnk"]) else None,
-                tgl_simpan=row["TglSimpan"].date() if pd.notna(row["TglSimpan"]) else None,
-                nama_pt=row["namaPT"],
-                kode_cabang=row["kode_cabang"]
+                norangka=item.norangka,
+                nama_stnk=item.nama_stnk,
+                kode_tipe=item.kode_tipe,
+                tipe=item.tipe,
+                kode_model=item.kode_model,
+                model=item.model,
+                merk=item.merk,
+                kode_samsat=item.kode_samsat,
+                samsat=item.samsat,
+                kode_dealer=item.kode_dealer,
+                nama_dealer=item.nama_dealer,
+                kode_group=item.kode_group,
+                group_perusahaan=item.group_perusahaan,
+                tgl_mohon_stnk=item.tgl_mohon_stnk,
+                tgl_simpan=item.tgl_simpan,
+                nama_pt=item.nama_pt,
+                kode_cabang=item.kode_cabang
             )
             records.append(record)
 
         db.bulk_save_objects(records)
         db.commit()
 
-        return {"message": f"{len(records)} data berhasil diimpor"}
+        return {
+            "message": f"{len(records)} data berhasil disimpan dari JSON."
+        }
+
+    except HTTPException as he:
+        raise he
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal mengimpor data: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Gagal menyimpan data dari JSON. Error: {str(e)}"
+        )

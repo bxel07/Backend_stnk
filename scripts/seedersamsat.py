@@ -8,98 +8,55 @@ from app.db.database import SessionLocal
 # Inisialisasi session
 db = SessionLocal()
 
-# ===== STEP 1: DATA WILAYAH DAN CAKUPAN =====
+# ===== DATA WILAYAH =====
+wilayah_nama = "DKI & Serang"
+cakupan_nama = "DKI:B"
 
-wilayah_data = {
-    "JAKARTA UTARA": ["JAKARTA UTARA"],
-    "BSD": ["BSD"],
-    "JAKARTA TIMUR": ["JAKARTA TIMUR"],
-    "BALARAJA": ["BALARAJA"],
-    "JAKARTA PUSAT": ["JAKARTA PUSAT"],
-    "JAKARTA SELATAN": ["JAKARTA SELATAN", "Kebayoran Baru", "Pasar Minggu"],
-    "CIPUTAT": ["CIPUTAT"],
-    "BEKASI": ["BEKASI"],
-    "CILEDUG": ["CILEDUG"],
-    "DEPOK": ["DEPOK"],
-    "CIKARANG": ["CIKARANG"],
-    "JAKARTA BARAT": ["JAKARTA BARAT"],
-    "CIKOKOL": ["CIKOKOL"],
-    "CINERE": ["CINERE"],
-    "BANDUNG": ["Cicendo", "Antapani"],
-}
+# Cek atau buat wilayah
+wilayah = db.query(glbm_wilayah).filter_by(nama_wilayah=wilayah_nama).first()
+if not wilayah:
+    wilayah = glbm_wilayah(nama_wilayah=wilayah_nama)
+    db.add(wilayah)
+    db.commit()
+    db.refresh(wilayah)
+    print(f"✓ Tambah wilayah: {wilayah_nama}")
 
-wilayah_objs = {}
+# Cek atau buat cakupan
+cakupan = db.query(glbm_wilayah_cakupan).filter_by(
+    nama_wilayah=cakupan_nama,
+    wilayah_id=wilayah.id
+).first()
+if not cakupan:
+    cakupan = glbm_wilayah_cakupan(
+        nama_wilayah=cakupan_nama,
+        wilayah_id=wilayah.id
+    )
+    db.add(cakupan)
+    db.commit()
+    db.refresh(cakupan)
+    print(f"✓ Tambah cakupan: {cakupan_nama}")
 
-# Insert wilayah
-for wilayah_name in wilayah_data:
-    wilayah = db.query(glbm_wilayah).filter_by(nama_wilayah=wilayah_name).first()
-    if not wilayah:
-        wilayah = glbm_wilayah(nama_wilayah=wilayah_name)
-        db.add(wilayah)
-        db.commit()
-        db.refresh(wilayah)
-        print(f"✓ Tambah wilayah: {wilayah_name}")
-    wilayah_objs[wilayah_name] = wilayah
-
-# Insert cakupan
-cakupan_objs = {}
-for wilayah_name, cakupans in wilayah_data.items():
-    wilayah = wilayah_objs[wilayah_name]
-    for cakupan_name in cakupans:
-        cakupan = db.query(glbm_wilayah_cakupan).filter_by(
-            nama_wilayah=cakupan_name, wilayah_id=wilayah.id
-        ).first()
-        if not cakupan:
-            cakupan = glbm_wilayah_cakupan(
-                nama_wilayah=cakupan_name,
-                wilayah_id=wilayah.id
-            )
-            db.add(cakupan)
-            db.commit()
-            db.refresh(cakupan)
-            print(f"✓ Tambah cakupan: {cakupan_name} untuk {wilayah_name}")
-        cakupan_objs[(cakupan_name, wilayah.id)] = cakupan
-
-# ===== STEP 2: DATA SAMSAT =====
-
+# ===== DATA SAMSAT =====
 data_samsat = [
-    ("UTR", "JAKARTA UTARA"),
-    ("BSD", "BSD"),
-    ("TMR", "JAKARTA TIMUR"),
-    ("BLR", "BALARAJA"),
-    ("PST", "JAKARTA PUSAT"),
-    ("SLT", "JAKARTA SELATAN"),
-    ("CPT", "CIPUTAT"),
-    ("BKS", "BEKASI"),
-    ("CLG", "CILEDUG"),
-    ("DPK", "DEPOK"),
-    ("CKR", "CIKARANG"),
-    ("BRT", "JAKARTA BARAT"),
-    ("CKL", "CIKOKOL"),
-    ("CNR", "CINERE"),
+    {"kode_samsat": "UTR", "nama_samsat": "Utara"},
+    {"kode_samsat": "PST", "nama_samsat": "PUSAT"},
+    {"kode_samsat": "TMR", "nama_samsat": "TIMUR"},
+    {"kode_samsat": "BRT", "nama_samsat": "BARAT"},
+    {"kode_samsat": "SLT", "nama_samsat": "SELATAN"},
 ]
 
-for kode, nama in data_samsat:
-    wilayah = wilayah_objs[nama]
-    cakupan = cakupan_objs.get((nama, wilayah.id))
-    if not cakupan:
-        # fallback kalau cakupan tidak ada (harusnya tidak terjadi)
-        cakupan = db.query(glbm_wilayah_cakupan).filter_by(
-            nama_wilayah=nama,
-            wilayah_id=wilayah.id
-        ).first()
-    # Insert samsat
-    existing_samsat = db.query(glbm_samsat).filter_by(kode_samsat=kode).first()
-    if not existing_samsat:
+for data in data_samsat:
+    existing = db.query(glbm_samsat).filter_by(kode_samsat=data["kode_samsat"]).first()
+    if not existing:
         samsat = glbm_samsat(
-            nama_samsat=nama,
-            kode_samsat=kode,
+            kode_samsat=data["kode_samsat"],
+            nama_samsat=data["nama_samsat"],
             wilayah_id=wilayah.id,
             wilayah_cakupan_id=cakupan.id
         )
         db.add(samsat)
-        print(f"✓ Tambah samsat: {kode} - {nama}")
+        print(f"✓ Tambah samsat: {data['kode_samsat']} - {data['nama_samsat']}")
 
 db.commit()
 db.close()
-print("✅ Selesai menambahkan wilayah, cakupan, dan samsat.")
+print("✅ Selesai menambahkan Samsat DKI.")

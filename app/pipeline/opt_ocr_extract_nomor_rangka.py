@@ -295,9 +295,9 @@ def run_batch_processing(
                     "pabrikan": vin_result.get('manufacturer'),
                     "tahun_kendaraan": vin_result.get('vehicle_year'),
                     "jumlah": vin_result.get('jumlah') or 0,
-                    "samsat": matched_info["samsat"],
+                    "nama_samsat": matched_info["samsat"],
                     "kode_samsat": matched_info["kode_samsat"],
-                    "merk": matched_info["merk"]
+                    "glbm_brand": matched_info["merk"]
                 },
                 "error_message": None
             }
