@@ -996,10 +996,9 @@ def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
             # Step 3: Filter STNKData berdasarkan user yang eligible DAN cocok brand
             query = db.query(STNKData).filter(STNKData.user_id.in_(user_ids_eligible))
 
-            # Tambahkan filter brand LIKE jika ada brand
+            # MENCARI BRAND YANG COCOK
             if brand_names:
-                brand_filters = [STNKData.nama_brand.ilike(f"%{brand}%") for brand in brand_names]
-                query = query.filter(or_(*brand_filters))
+                query = query.filter(STNKData.nama_brand.in_(brand_names))
 
             # Eksekusi query
             stnk_entries = query.all()
@@ -1039,8 +1038,7 @@ def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
             query = db.query(STNKData).filter(STNKData.user_id.in_(user_ids_eligible))
 
             if pt_names:
-                pt_filters = [STNKData.nama_pt.ilike(f"%{pt}%") for pt in pt_names]
-                query = query.filter(or_(*pt_filters))
+                query = query.filter(STNKData.nama_pt.in_(pt_names))
 
             stnk_entries = query.all()
 
