@@ -947,6 +947,10 @@ def read_root():
 from sqlalchemy.orm import joinedload
 
 
+from sqlalchemy.orm import joinedload
+from sqlalchemy import or_
+
+
 @app.get("/stnk-data/")
 def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
     db: Session = SessionLocal()
@@ -958,50 +962,94 @@ def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
         if role == "superadmin":
             stnk_entries = query.all()
 
-        elif role in ["cao", "admin"]:
-            otorisasi_rows = db.query(Detail_otorisasi_samsat).options(
-                joinedload(Detail_otorisasi_samsat.glbm_brand),
-                joinedload(Detail_otorisasi_samsat.glbm_pt),
-                joinedload(Detail_otorisasi_samsat.glbm_samsat)
-            ).join(
+        elif role == "cao":
+# Ambil semua detail otorisasi milik CAO yang sedang login
+            otorisasi_rows = db.query(Detail_otorisasi_samsat).join(
                 otorisasi_samsat,
                 otorisasi_samsat.id == Detail_otorisasi_samsat.otorisasi_samsat_id
             ).filter(
                 otorisasi_samsat.user_id == user_id
             ).all()
 
-            # Siapkan list untuk filter
-            kode_samsat_list = []
-            pt_names = []
+            # Ambil semua wilayah cakupan milik CAO
+            wilayah_cakupan_ids = set(row.wilayah_cakupan_id for row in otorisasi_rows)
+
+            # Ambil semua brand milik CAO
+            brand_ids = set(row.glbm_brand_id for row in otorisasi_rows if row.glbm_brand_id is not None)
+
+            # Ambil nama-nama brand berdasarkan ID
             brand_names = []
+            if brand_ids:
+                brand_names = [b.nama_brand for b in db.query(glbm_brand).filter(glbm_brand.id.in_(brand_ids)).all()]
 
-            for row in otorisasi_rows:
-                # Ambil PT (wajib semua)
-                if row.glbm_pt:
-                    pt_names.append(row.glbm_pt.nama_pt)
+            # Step 1: Ambil semua user yang pernah upload STNK
+            uploaded_user_ids = [u[0] for u in db.query(STNKData.user_id).distinct().all()]
 
-                if role == "admin":
-                    # Admin pakai wilayah induk (glbm_samsat_id)
-                    if row.glbm_samsat:
-                        kode_samsat_list.append(row.glbm_samsat.kode_samsat)
+            # Step 2: Cari user yang wilayah otorisasinya cocok dengan cakupan CAO
+            user_ids_eligible = set()
+            for uid in uploaded_user_ids:
+                user_otorisasi_rows = db.query(Detail_otorisasi_samsat).join(
+                    otorisasi_samsat,
+                    otorisasi_samsat.id == Detail_otorisasi_samsat.otorisasi_samsat_id
+                ).filter(
+                    otorisasi_samsat.user_id == uid
+                ).all()
 
-                elif role == "cao":
-                    # CAO pakai wilayah cakupan + brand
-                    if row.wilayah_cakupan:
-                        kode_samsat_list.append(row.wilayah_cakupan.kode_samsat)
-                    if row.glbm_brand:
-                        brand_names.append(row.glbm_brand.nama_brand)
+                for row in user_otorisasi_rows:
+                    if row.wilayah_cakupan_id in wilayah_cakupan_ids:
+                        user_ids_eligible.add(uid)
+                        break  # cukup satu yang cocok
 
-            # Filter STNK
-            filters = []
-            if kode_samsat_list:
-                filters.append(STNKData.kode_samsat.in_(kode_samsat_list))
+            # Step 3: Filter STNKData berdasarkan user yang eligible DAN cocok brand
+            query = db.query(STNKData).filter(STNKData.user_id.in_(user_ids_eligible))
+
+            # Tambahkan filter brand LIKE jika ada brand
+            if brand_names:
+                brand_filters = [STNKData.nama_brand.ilike(f"%{brand}%") for brand in brand_names]
+                query = query.filter(or_(*brand_filters))
+
+            # Eksekusi query
+            stnk_entries = query.all()
+
+        elif role == "admin":
+            otorisasi_rows = db.query(Detail_otorisasi_samsat).join(
+                otorisasi_samsat,
+                otorisasi_samsat.id == Detail_otorisasi_samsat.otorisasi_samsat_id
+            ).filter(
+                otorisasi_samsat.user_id == user_id
+            ).all()
+
+            wilayah_ids = set(row.wilayah_id for row in otorisasi_rows)
+
+            pt_ids = set(row.glbm_pt_id for row in otorisasi_rows if row.glbm_pt_id is not None)
+
+            pt_names = []
+            if pt_ids:
+                pt_names = [b.nama_pt for b in db.query(glbm_pt).filter(glbm_pt.id.in_(pt_ids)).all()]
+
+            uploaded_user_ids = [u[0] for u in db.query(STNKData.user_id).distinct().all()]
+
+            user_ids_eligible = set()
+            for uid in uploaded_user_ids:
+                user_otorisasi_rows = db.query(Detail_otorisasi_samsat).join(
+                    otorisasi_samsat,
+                    otorisasi_samsat.id == Detail_otorisasi_samsat.otorisasi_samsat_id
+                ).filter(
+                    otorisasi_samsat.user_id == uid
+                ).all()
+
+                for row in user_otorisasi_rows:
+                    if row.wilayah_id in wilayah_ids:
+                        user_ids_eligible.add(uid)
+                        break
+
+            query = db.query(STNKData).filter(STNKData.user_id.in_(user_ids_eligible))
+
             if pt_names:
-                filters.append(STNKData.nama_pt.in_(pt_names))
-            if role == "cao" and brand_names:
-                filters.append(STNKData.nama_brand.in_(brand_names))
+                pt_filters = [STNKData.nama_pt.ilike(f"%{pt}%") for pt in pt_names]
+                query = query.filter(or_(*pt_filters))
 
-            stnk_entries = query.filter(*filters).all()
+            stnk_entries = query.all()
 
         elif role == "user":
             stnk_entries = query.filter(STNKData.user_id == user_id).all()
