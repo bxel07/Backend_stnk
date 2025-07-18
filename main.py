@@ -944,60 +944,62 @@ def read_root():
 
     db.close()
 
+from sqlalchemy.orm import joinedload
+
+
 @app.get("/stnk-data/")
 def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
     db: Session = SessionLocal()
     try:
         role = current_user.get("role")
-        user_id = int(current_user.get("sub"))  # ID user dari token
+        user_id = int(current_user.get("sub"))
         query = db.query(STNKData)
 
         if role == "superadmin":
             stnk_entries = query.all()
 
-        elif role == "cao":
+        elif role in ["cao", "admin"]:
             otorisasi_rows = db.query(Detail_otorisasi_samsat).options(
                 joinedload(Detail_otorisasi_samsat.glbm_brand),
-                joinedload(Detail_otorisasi_samsat.glbm_pt)
-            ).join(otorisasi_samsat).filter(
+                joinedload(Detail_otorisasi_samsat.glbm_pt),
+                joinedload(Detail_otorisasi_samsat.glbm_samsat)
+            ).join(
+                otorisasi_samsat,
+                otorisasi_samsat.id == Detail_otorisasi_samsat.otorisasi_samsat_id
+            ).filter(
                 otorisasi_samsat.user_id == user_id
             ).all()
 
-            wilayah_cakupan_ids = [row.wilayah_cakupan_id for row in otorisasi_rows]
-            brand_names = [row.glbm_brand.nama_brand for row in otorisasi_rows if row.glbm_brand]
-            pt_names = [row.glbm_pt.nama_pt for row in otorisasi_rows if row.glbm_pt]
+            # Siapkan list untuk filter
+            kode_samsat_list = []
+            pt_names = []
+            brand_names = []
 
-            samsat_ids = db.query(glbm_samsat.id).filter(
-                glbm_samsat.wilayah_cakupan_id.in_(wilayah_cakupan_ids)
-            ).all()
-            samsat_ids = [id for (id,) in samsat_ids]
+            for row in otorisasi_rows:
+                # Ambil PT (wajib semua)
+                if row.glbm_pt:
+                    pt_names.append(row.glbm_pt.nama_pt)
 
-            filters = [STNKData.glbm_samsat_id.in_(samsat_ids)]
-            if brand_names:
+                if role == "admin":
+                    # Admin pakai wilayah induk (glbm_samsat_id)
+                    if row.glbm_samsat:
+                        kode_samsat_list.append(row.glbm_samsat.kode_samsat)
+
+                elif role == "cao":
+                    # CAO pakai wilayah cakupan + brand
+                    if row.wilayah_cakupan:
+                        kode_samsat_list.append(row.wilayah_cakupan.kode_samsat)
+                    if row.glbm_brand:
+                        brand_names.append(row.glbm_brand.nama_brand)
+
+            # Filter STNK
+            filters = []
+            if kode_samsat_list:
+                filters.append(STNKData.kode_samsat.in_(kode_samsat_list))
+            if pt_names:
+                filters.append(STNKData.nama_pt.in_(pt_names))
+            if role == "cao" and brand_names:
                 filters.append(STNKData.nama_brand.in_(brand_names))
-            if pt_names:
-                filters.append(STNKData.nama_pt.in_(pt_names))
-
-            stnk_entries = query.filter(*filters).all()
-
-        elif role == "admin":
-            otorisasi_rows = db.query(Detail_otorisasi_samsat).options(
-                joinedload(Detail_otorisasi_samsat.glbm_pt)
-            ).join(otorisasi_samsat).filter(
-                otorisasi_samsat.user_id == user_id
-            ).all()
-
-            wilayah_ids = [row.wilayah_id for row in otorisasi_rows]
-            pt_names = [row.glbm_pt.nama_pt for row in otorisasi_rows if row.glbm_pt]
-
-            samsat_ids = db.query(glbm_samsat.id).filter(
-                glbm_samsat.wilayah_id.in_(wilayah_ids)
-            ).all()
-            samsat_ids = [id for (id,) in samsat_ids]
-
-            filters = [STNKData.glbm_samsat_id.in_(samsat_ids)]
-            if pt_names:
-                filters.append(STNKData.nama_pt.in_(pt_names))
 
             stnk_entries = query.filter(*filters).all()
 
@@ -1005,10 +1007,7 @@ def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
             stnk_entries = query.filter(STNKData.user_id == user_id).all()
 
         else:
-            return {
-                "status": "forbidden",
-                "message": "Anda tidak memiliki akses"
-            }
+            return {"status": "forbidden", "message": "Anda tidak memiliki akses"}
 
         # Format hasil
         data = []
@@ -1031,6 +1030,7 @@ def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
         return {"status": "error", "message": str(e)}
     finally:
         db.close()
+
 
 @app.get("/stnk-data/with-correction/")
 def get_ktp_data_with_corrections(current_user=Depends(require_role(RoleEnum.ADMIN, RoleEnum.SUPERADMIN))):
@@ -1189,7 +1189,6 @@ class STNKSaveRequest(BaseModel):
     filename: str
     path: str
     kode_samsat: Optional[str] = None
-    glbm_samsat_id: Optional[int] = None  # Tambahkan ini untuk kompatibilitas
     details: Optional[STNKDetail] = None
 
 from sqlalchemy import text
@@ -1221,7 +1220,7 @@ async def save_data_stnk(request: STNKSaveRequest, current_user: dict = Depends(
         nama_brand = None
         nama_pt = None
         final_kode_samsat = None
-        final_glbm_samsat_id = None
+
 
         print(f"Mencari data untuk nomor rangka: {nomor_rangka_clean}")
         
@@ -1243,18 +1242,6 @@ async def save_data_stnk(request: STNKSaveRequest, current_user: dict = Depends(
                 print("❌ Data tidak ditemukan di master_excel")
         except Exception as e:
             print(f"❌ Error query master_excel: {str(e)}")
-
-        # Cari glbm_samsat_id dari kode_samsat
-        if final_kode_samsat:
-            try:
-                samsat = db.query(glbm_samsat).filter(glbm_samsat.kode == final_kode_samsat).first()
-                if samsat:
-                    final_glbm_samsat_id = samsat.id
-                    print(f"✅ glbm_samsat ditemukan: ID={final_glbm_samsat_id}")
-                else:
-                    print(f"⚠️ Tidak ada glbm_samsat dengan kode: {final_kode_samsat}")
-            except Exception as e:
-                print(f"❌ Error saat mencari glbm_samsat_id: {str(e)}")
 
         # Rename file
         old_path = request.path
@@ -1282,7 +1269,6 @@ async def save_data_stnk(request: STNKSaveRequest, current_user: dict = Depends(
             path=new_path,
             user_id=user_id,
             kode_samsat=final_kode_samsat,
-            glbm_samsat_id=final_glbm_samsat_id,
             nomor_rangka=nomor_rangka_clean,
             jumlah=jumlah_value,
             nama_pt=nama_pt,
@@ -1302,7 +1288,6 @@ async def save_data_stnk(request: STNKSaveRequest, current_user: dict = Depends(
                 "nomor_rangka": stnk_entry.nomor_rangka,
                 "jumlah": stnk_entry.jumlah,
                 "kode_samsat": stnk_entry.kode_samsat,
-                "glbm_samsat_id": stnk_entry.glbm_samsat_id,
                 "user_id": stnk_entry.user_id,
                 "nama_pt": stnk_entry.nama_pt,
                 "nama_brand": stnk_entry.nama_brand,
