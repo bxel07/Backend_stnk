@@ -2,26 +2,27 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
 from app.db.model import glbm_wilayah, glbm_wilayah_cakupan, glbm_samsat
 from app.db.database import SessionLocal
 
-# Inisialisasi session
 db = SessionLocal()
 
-# ===== DATA WILAYAH =====
+# Step 1: Buat atau ambil wilayah "DKI & Serang"
 wilayah_nama = "DKI & Serang"
-cakupan_nama = "DKI:B"
+cakupan_nama = "JABAR:B"
 
-# Cek atau buat wilayah
 wilayah = db.query(glbm_wilayah).filter_by(nama_wilayah=wilayah_nama).first()
 if not wilayah:
     wilayah = glbm_wilayah(nama_wilayah=wilayah_nama)
     db.add(wilayah)
     db.commit()
     db.refresh(wilayah)
-    print(f"✓ Tambah wilayah: {wilayah_nama}")
+    print(f"✓ Buat wilayah: {wilayah_nama}")
+else:
+    print(f"✓ Wilayah sudah ada: {wilayah_nama}")
 
-# Cek atau buat cakupan
+# Step 2: Buat atau ambil cakupan "JABAR:B"
 cakupan = db.query(glbm_wilayah_cakupan).filter_by(
     nama_wilayah=cakupan_nama,
     wilayah_id=wilayah.id
@@ -34,20 +35,22 @@ if not cakupan:
     db.add(cakupan)
     db.commit()
     db.refresh(cakupan)
-    print(f"✓ Tambah cakupan: {cakupan_nama}")
+    print(f"✓ Buat cakupan: {cakupan_nama}")
+else:
+    print(f"✓ Cakupan sudah ada: {cakupan_nama}")
 
-# ===== DATA SAMSAT =====
-data_samsat = [
-    {"kode_samsat": "UTR", "nama_samsat": "Utara"},
-    {"kode_samsat": "PST", "nama_samsat": "PUSAT"},
-    {"kode_samsat": "TMR", "nama_samsat": "TIMUR"},
-    {"kode_samsat": "BRT", "nama_samsat": "BARAT"},
-    {"kode_samsat": "SLT", "nama_samsat": "SELATAN"},
+# Step 3: Daftar Samsat di JABAR:B (dari gambar yang kamu kasih)
+samsat_jabar = [
+    {"kode_samsat": "BKS", "nama_samsat": "Bekasi"},
+    {"kode_samsat": "CKG", "nama_samsat": "Cikarang"},
+    {"kode_samsat": "DPK", "nama_samsat": "Depok"},
+    {"kode_samsat": "CNR", "nama_samsat": "Cinere"},
+    # Tambahin sendiri sisanya dari daftar yang kamu punya
 ]
 
-for data in data_samsat:
-    existing = db.query(glbm_samsat).filter_by(kode_samsat=data["kode_samsat"]).first()
-    if not existing:
+for data in samsat_jabar:
+    samsat = db.query(glbm_samsat).filter_by(kode_samsat=data["kode_samsat"]).first()
+    if not samsat:
         samsat = glbm_samsat(
             kode_samsat=data["kode_samsat"],
             nama_samsat=data["nama_samsat"],
@@ -56,7 +59,9 @@ for data in data_samsat:
         )
         db.add(samsat)
         print(f"✓ Tambah samsat: {data['kode_samsat']} - {data['nama_samsat']}")
+    else:
+        print(f"• Lewat (sudah ada): {data['kode_samsat']} - {data['nama_samsat']}")
 
 db.commit()
 db.close()
-print("✅ Selesai menambahkan Samsat DKI.")
+print("✅ SELESAI: Data samsat Jabar (cakupan JABAR:B) ditambahkan ke wilayah DKI & Serang.")

@@ -163,25 +163,30 @@ def get_all_users(
         for otorisasi in user.otorisasi_samsat:
             all_detail.extend(otorisasi.detail_otorisasi_samsat)
 
-        brand_ids = list({d.glbm_brand_id for d in all_detail})
-        pt_ids = list({d.glbm_pt_id for d in all_detail})
-        samsat_ids = list({d.glbm_samsat_id for d in all_detail})
+        # Hapus ini kalau tidak dibutuhkan di root:
+        # brand_ids = list({d.glbm_brand_id for d in all_detail})
+        # pt_ids = list({d.glbm_pt_id for d in all_detail})
+        # samsat_ids = list({d.glbm_samsat_id for d in all_detail})
+
+        # Filter otorisasi unik berdasarkan kombinasi pt_id & brand_id
+        seen = set()
+        otorisasi_clean = []
+        for d in all_detail:
+            key = (d.glbm_pt_id, d.glbm_brand_id)
+            if key not in seen:
+                seen.add(key)
+                otorisasi_clean.append({
+                    "pt_id": d.glbm_pt_id,
+                    "brand_id": d.glbm_brand_id
+                })
 
         result.append({
             "id": user.id,
             "username": user.username,
             "gmail": user.gmail,
             "role": user.role.role if user.role else None,
-            "brand_ids": brand_ids,
-            "pt_id": pt_ids[0] if pt_ids else None,
-            "samsat_id": samsat_ids[0] if samsat_ids else None,
-            "otorisasi":[
-                {
-                    "pt_id": detail.glbm_pt_id,
-                    "brand_id": detail.glbm_brand_id,
-                }
-                for detail in all_detail
-            ]
+            # ⛔ HAPUS pt_id, brand_ids, samsat_id dari sini
+            "otorisasi": otorisasi_clean
         })
 
     return {"data": result}
@@ -246,45 +251,39 @@ class RegisterData(BaseModel):
     glbm_pt_id: Optional[List[int]] = []
     glbm_samsat_id: int
 
-
 @app.post("/register")
 def register(data: RegisterData, db: Session = Depends(get_db)):
-    # 1. Validasi username & gmail
     if db.query(User).filter(User.username == data.username).first():
         raise HTTPException(status_code=400, detail="Username sudah terdaftar")
     if db.query(User).filter(User.gmail == data.gmail).first():
         raise HTTPException(status_code=400, detail="Gmail sudah terdaftar")
 
     try:
-        # 2. Simpan biodata
         biodata = stpm_orlap(
             nama_lengkap=data.nama_lengkap,
             nomor_telepon=data.nomor_telepon
         )
         db.add(biodata)
-        db.flush()  # untuk dapatkan biodata.id
+        db.flush()
 
-        # 3. Simpan user
         user = User(
             username=data.username,
-            hashed_password=data.password,  # 🔒 pastikan ini di-hash di real-case
+            hashed_password=data.password,
             gmail=data.gmail,
             role_id=data.role_id,
             stpm_orlap_id=biodata.id
         )
         db.add(user)
-        db.flush()  # untuk dapatkan user.id
+        db.flush()
 
-        # 4. Simpan otorisasi_samsat
         otorisasi = otorisasi_samsat(
             user_id=user.id,
             created_at=datetime.now(JAKARTA_TZ),
             updated_at=datetime.now(JAKARTA_TZ)
         )
         db.add(otorisasi)
-        db.flush()  # untuk dapatkan otorisasi.id
+        db.flush()
 
-        # 5. Ambil data wilayah dari glbm_samsat
         samsat = db.query(glbm_samsat).filter(glbm_samsat.id == data.glbm_samsat_id).first()
         if not samsat:
             raise HTTPException(status_code=400, detail="Samsat tidak ditemukan")
@@ -292,29 +291,21 @@ def register(data: RegisterData, db: Session = Depends(get_db)):
         wilayah_id = samsat.wilayah_id
         wilayah_cakupan_id = samsat.wilayah_cakupan_id
 
-        # 6. Simpan detail otorisasi
-        if data.glbm_brand_ids:
-            for brand_id in data.glbm_brand_ids:
+        # Kombinasi semua PT dan Brand
+        pt_ids = data.glbm_pt_id if data.glbm_pt_id else [None]
+        brand_ids = data.glbm_brand_ids if data.glbm_brand_ids else [None]
+
+        for pt_id in pt_ids:
+            for brand_id in brand_ids:
                 detail = Detail_otorisasi_samsat(
                     glbm_samsat_id=data.glbm_samsat_id,
                     wilayah_id=wilayah_id,
                     wilayah_cakupan_id=wilayah_cakupan_id,
-                    glbm_brand_id=brand_id if brand_id else None,
-                    glbm_pt_id=data.glbm_pt_id[0] if data.glbm_pt_id else None,
+                    glbm_brand_id=brand_id,
+                    glbm_pt_id=pt_id,
                     otorisasi_samsat_id=otorisasi.id
                 )
                 db.add(detail)
-        else:
-            # jika brand kosong → tetap simpan satu entri (brand NULL)
-            detail = Detail_otorisasi_samsat(
-                glbm_samsat_id=data.glbm_samsat_id,
-                wilayah_id=wilayah_id,
-                wilayah_cakupan_id=wilayah_cakupan_id,
-                glbm_brand_id=None ,
-                glbm_pt_id=data.glbm_pt_id[0] if data.glbm_pt_id else None,
-                otorisasi_samsat_id=otorisasi.id
-            )
-            db.add(detail)
 
         db.commit()
         return {"message": "Registrasi berhasil"}
@@ -322,6 +313,8 @@ def register(data: RegisterData, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Registrasi gagal: {e}")
+
+
 
 class otorisasiUpdate(BaseModel):
     brand_id: Optional[int] = None
@@ -944,71 +937,116 @@ def read_root():
 
     db.close()
 
+from sqlalchemy.orm import joinedload
+
+
+from sqlalchemy.orm import joinedload
+from sqlalchemy import or_
+
+
 @app.get("/stnk-data/")
 def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
     db: Session = SessionLocal()
     try:
         role = current_user.get("role")
-        user_id = int(current_user.get("sub"))  # ID user dari token
+        user_id = int(current_user.get("sub"))
         query = db.query(STNKData)
 
         if role == "superadmin":
             stnk_entries = query.all()
 
         elif role == "cao":
-            otorisasi_rows = db.query(Detail_otorisasi_samsat).options(
-                joinedload(Detail_otorisasi_samsat.glbm_brand),
-                joinedload(Detail_otorisasi_samsat.glbm_pt)
-            ).join(otorisasi_samsat).filter(
+# Ambil semua detail otorisasi milik CAO yang sedang login
+            otorisasi_rows = db.query(Detail_otorisasi_samsat).join(
+                otorisasi_samsat,
+                otorisasi_samsat.id == Detail_otorisasi_samsat.otorisasi_samsat_id
+            ).filter(
                 otorisasi_samsat.user_id == user_id
             ).all()
 
-            wilayah_cakupan_ids = [row.wilayah_cakupan_id for row in otorisasi_rows]
-            brand_names = [row.glbm_brand.nama_brand for row in otorisasi_rows if row.glbm_brand]
-            pt_names = [row.glbm_pt.nama_pt for row in otorisasi_rows if row.glbm_pt]
+            # Ambil semua wilayah cakupan milik CAO
+            wilayah_cakupan_ids = set(row.wilayah_cakupan_id for row in otorisasi_rows)
 
-            samsat_ids = db.query(glbm_samsat.id).filter(
-                glbm_samsat.wilayah_cakupan_id.in_(wilayah_cakupan_ids)
-            ).all()
-            samsat_ids = [id for (id,) in samsat_ids]
+            # Ambil semua brand milik CAO
+            brand_ids = set(row.glbm_brand_id for row in otorisasi_rows if row.glbm_brand_id is not None)
 
-            filters = [STNKData.glbm_samsat_id.in_(samsat_ids)]
+            # Ambil nama-nama brand berdasarkan ID
+            brand_names = []
+            if brand_ids:
+                brand_names = [b.nama_brand for b in db.query(glbm_brand).filter(glbm_brand.id.in_(brand_ids)).all()]
+
+            # Step 1: Ambil semua user yang pernah upload STNK
+            uploaded_user_ids = [u[0] for u in db.query(STNKData.user_id).distinct().all()]
+
+            # Step 2: Cari user yang wilayah otorisasinya cocok dengan cakupan CAO
+            user_ids_eligible = set()
+            for uid in uploaded_user_ids:
+                user_otorisasi_rows = db.query(Detail_otorisasi_samsat).join(
+                    otorisasi_samsat,
+                    otorisasi_samsat.id == Detail_otorisasi_samsat.otorisasi_samsat_id
+                ).filter(
+                    otorisasi_samsat.user_id == uid
+                ).all()
+
+                for row in user_otorisasi_rows:
+                    if row.wilayah_cakupan_id in wilayah_cakupan_ids:
+                        user_ids_eligible.add(uid)
+                        break  # cukup satu yang cocok
+
+            # Step 3: Filter STNKData berdasarkan user yang eligible DAN cocok brand
+            query = db.query(STNKData).filter(STNKData.user_id.in_(user_ids_eligible))
+
+            # MENCARI BRAND YANG COCOK
             if brand_names:
-                filters.append(STNKData.nama_brand.in_(brand_names))
-            if pt_names:
-                filters.append(STNKData.nama_pt.in_(pt_names))
+                query = query.filter(STNKData.nama_brand.in_(brand_names))
 
-            stnk_entries = query.filter(*filters).all()
+            # Eksekusi query
+            stnk_entries = query.all()
 
         elif role == "admin":
-            otorisasi_rows = db.query(Detail_otorisasi_samsat).options(
-                joinedload(Detail_otorisasi_samsat.glbm_pt)
-            ).join(otorisasi_samsat).filter(
+            otorisasi_rows = db.query(Detail_otorisasi_samsat).join(
+                otorisasi_samsat,
+                otorisasi_samsat.id == Detail_otorisasi_samsat.otorisasi_samsat_id
+            ).filter(
                 otorisasi_samsat.user_id == user_id
             ).all()
 
-            wilayah_ids = [row.wilayah_id for row in otorisasi_rows]
-            pt_names = [row.glbm_pt.nama_pt for row in otorisasi_rows if row.glbm_pt]
+            wilayah_ids = set(row.wilayah_id for row in otorisasi_rows)
 
-            samsat_ids = db.query(glbm_samsat.id).filter(
-                glbm_samsat.wilayah_id.in_(wilayah_ids)
-            ).all()
-            samsat_ids = [id for (id,) in samsat_ids]
+            pt_ids = set(row.glbm_pt_id for row in otorisasi_rows if row.glbm_pt_id is not None)
 
-            filters = [STNKData.glbm_samsat_id.in_(samsat_ids)]
+            pt_names = []
+            if pt_ids:
+                pt_names = [b.nama_pt for b in db.query(glbm_pt).filter(glbm_pt.id.in_(pt_ids)).all()]
+
+            uploaded_user_ids = [u[0] for u in db.query(STNKData.user_id).distinct().all()]
+
+            user_ids_eligible = set()
+            for uid in uploaded_user_ids:
+                user_otorisasi_rows = db.query(Detail_otorisasi_samsat).join(
+                    otorisasi_samsat,
+                    otorisasi_samsat.id == Detail_otorisasi_samsat.otorisasi_samsat_id
+                ).filter(
+                    otorisasi_samsat.user_id == uid
+                ).all()
+
+                for row in user_otorisasi_rows:
+                    if row.wilayah_id in wilayah_ids:
+                        user_ids_eligible.add(uid)
+                        break
+
+            query = db.query(STNKData).filter(STNKData.user_id.in_(user_ids_eligible))
+
             if pt_names:
-                filters.append(STNKData.nama_pt.in_(pt_names))
+                query = query.filter(STNKData.nama_pt.in_(pt_names))
 
-            stnk_entries = query.filter(*filters).all()
+            stnk_entries = query.all()
 
         elif role == "user":
             stnk_entries = query.filter(STNKData.user_id == user_id).all()
 
         else:
-            return {
-                "status": "forbidden",
-                "message": "Anda tidak memiliki akses"
-            }
+            return {"status": "forbidden", "message": "Anda tidak memiliki akses"}
 
         # Format hasil
         data = []
@@ -1031,6 +1069,7 @@ def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
         return {"status": "error", "message": str(e)}
     finally:
         db.close()
+
 
 @app.get("/stnk-data/with-correction/")
 def get_ktp_data_with_corrections(current_user=Depends(require_role(RoleEnum.ADMIN, RoleEnum.SUPERADMIN))):
@@ -1189,7 +1228,6 @@ class STNKSaveRequest(BaseModel):
     filename: str
     path: str
     kode_samsat: Optional[str] = None
-    glbm_samsat_id: Optional[int] = None  # Tambahkan ini untuk kompatibilitas
     details: Optional[STNKDetail] = None
 
 from sqlalchemy import text
@@ -1221,7 +1259,7 @@ async def save_data_stnk(request: STNKSaveRequest, current_user: dict = Depends(
         nama_brand = None
         nama_pt = None
         final_kode_samsat = None
-        final_glbm_samsat_id = None
+
 
         print(f"Mencari data untuk nomor rangka: {nomor_rangka_clean}")
         
@@ -1243,18 +1281,6 @@ async def save_data_stnk(request: STNKSaveRequest, current_user: dict = Depends(
                 print("❌ Data tidak ditemukan di master_excel")
         except Exception as e:
             print(f"❌ Error query master_excel: {str(e)}")
-
-        # Cari glbm_samsat_id dari kode_samsat
-        if final_kode_samsat:
-            try:
-                samsat = db.query(glbm_samsat).filter(glbm_samsat.kode == final_kode_samsat).first()
-                if samsat:
-                    final_glbm_samsat_id = samsat.id
-                    print(f"✅ glbm_samsat ditemukan: ID={final_glbm_samsat_id}")
-                else:
-                    print(f"⚠️ Tidak ada glbm_samsat dengan kode: {final_kode_samsat}")
-            except Exception as e:
-                print(f"❌ Error saat mencari glbm_samsat_id: {str(e)}")
 
         # Rename file
         old_path = request.path
@@ -1282,7 +1308,6 @@ async def save_data_stnk(request: STNKSaveRequest, current_user: dict = Depends(
             path=new_path,
             user_id=user_id,
             kode_samsat=final_kode_samsat,
-            glbm_samsat_id=final_glbm_samsat_id,
             nomor_rangka=nomor_rangka_clean,
             jumlah=jumlah_value,
             nama_pt=nama_pt,
@@ -1302,7 +1327,6 @@ async def save_data_stnk(request: STNKSaveRequest, current_user: dict = Depends(
                 "nomor_rangka": stnk_entry.nomor_rangka,
                 "jumlah": stnk_entry.jumlah,
                 "kode_samsat": stnk_entry.kode_samsat,
-                "glbm_samsat_id": stnk_entry.glbm_samsat_id,
                 "user_id": stnk_entry.user_id,
                 "nama_pt": stnk_entry.nama_pt,
                 "nama_brand": stnk_entry.nama_brand,
@@ -1320,72 +1344,6 @@ async def save_data_stnk(request: STNKSaveRequest, current_user: dict = Depends(
         db.close()
 
         
-@app.post("/register")
-def register(data: RegisterData, db: Session = Depends(get_db)):
-    if db.query(User).filter(User.username == data.username).first():
-        raise HTTPException(status_code=400, detail="Username sudah terdaftar")
-    if db.query(User).filter(User.gmail == data.gmail).first():
-        raise HTTPException(status_code=400, detail="Gmail sudah terdaftar")
-
-    try:
-        # Simpan user
-        user = User(
-            username=data.username,
-            hashed_password=data.password,  # hash dulu di produksi ya
-            gmail=data.gmail,
-            role_id=data.role_id,
-        )
-        db.add(user)
-        db.flush()
-
-        # Simpan biodata
-        biodata = stpm_orlap(
-            nama_lengkap=data.nama_lengkap,
-            nomor_telepon=data.nomor_telepon
-        )
-        db.add(biodata)
-        db.flush()
-
-        # Simpan otorisasi_samsat
-        otorisasi = otorisasi_samsat(
-            user_id=user.id,
-            created_at=datetime.now(JAKARTA_TZ),
-            updated_at=datetime.now(JAKARTA_TZ)
-        )
-        db.add(otorisasi)
-        db.flush()
-
-        # Tambahkan detail otorisasi
-        if data.glbm_brand_ids:
-            for brand_id in data.glbm_brand_ids:
-                detail = Detail_otorisasi_samsat(
-                    glbm_samsat_id=data.glbm_samsat_id,
-                    wilayah_cakupan_id=1,
-                    wilayah_id=1,
-                    glbm_brand_id=brand_id,
-                    glbm_pt_id=data.glbm_pt_id,
-                    otorisasi_samsat_id=otorisasi.id
-                )
-                db.add(detail)
-        else:
-            # Brand kosong, masukkan dengan brand NULL
-            detail = Detail_otorisasi_samsat(
-                glbm_samsat_id=data.glbm_samsat_id,
-                wilayah_cakupan_id=1,
-                wilayah_id=1,
-                glbm_brand_id=None,
-                glbm_pt_id=None,
-                otorisasi_samsat_id=otorisasi.id
-            )
-            db.add(detail)
-
-        db.commit()
-        return {"message": "Registrasi berhasil"}
-
-    except Exception as e:
-        db.rollback()
-        print("❌ Registrasi gagal:", e)
-        raise HTTPException(status_code=400, detail=f"Registrasi gagal: {e}")
 
 
 class UpdateSTNKRequest(BaseModel):

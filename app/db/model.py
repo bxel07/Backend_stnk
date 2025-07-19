@@ -14,7 +14,6 @@ class STNKData(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    glbm_samsat_id = Column(Integer, ForeignKey("glbm_samsat.id"), nullable=True)
     file = Column(String, nullable=True)
     path = Column(String, nullable=True)
     nomor_rangka = Column(String, nullable=True)
@@ -28,7 +27,6 @@ class STNKData(Base):
 
     corrections = relationship("STNKFieldCorrection", back_populates="stnk_data", cascade="all, delete-orphan")
     user = relationship("User", back_populates="stnk_data")
-    glbm_samsat = relationship("glbm_samsat", back_populates="stnk_data")
 
 class STNKFieldCorrection(Base):
     __tablename__ = "stnk_field_corrections"
@@ -122,7 +120,6 @@ class glbm_samsat(Base):
     wilayah = relationship("glbm_wilayah", back_populates="samsats")
     wilayah_cakupan = relationship("glbm_wilayah_cakupan", back_populates="samsats")
     detail_otorisasi_samsat = relationship("Detail_otorisasi_samsat", back_populates="glbm_samsat")
-    stnk_data = relationship("STNKData", back_populates="glbm_samsat", cascade="all, delete-orphan")
 
     def as_dict(self):
         return {
