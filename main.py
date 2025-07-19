@@ -953,10 +953,12 @@ def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
         query = db.query(STNKData)
 
         if role == "superadmin":
-            stnk_entries = query.all()
+            stnk_entries = db.query(STNKData).join(
+                master_excel,
+                STNKData.nomor_rangka == master_excel.norangka
+            ).all()
 
         elif role == "cao":
-# Ambil semua detail otorisasi milik CAO yang sedang login
             otorisasi_rows = db.query(Detail_otorisasi_samsat).join(
                 otorisasi_samsat,
                 otorisasi_samsat.id == Detail_otorisasi_samsat.otorisasi_samsat_id
@@ -964,21 +966,15 @@ def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
                 otorisasi_samsat.user_id == user_id
             ).all()
 
-            # Ambil semua wilayah cakupan milik CAO
             wilayah_cakupan_ids = set(row.wilayah_cakupan_id for row in otorisasi_rows)
-
-            # Ambil semua brand milik CAO
             brand_ids = set(row.glbm_brand_id for row in otorisasi_rows if row.glbm_brand_id is not None)
 
-            # Ambil nama-nama brand berdasarkan ID
             brand_names = []
             if brand_ids:
                 brand_names = [b.nama_brand for b in db.query(glbm_brand).filter(glbm_brand.id.in_(brand_ids)).all()]
 
-            # Step 1: Ambil semua user yang pernah upload STNK
             uploaded_user_ids = [u[0] for u in db.query(STNKData.user_id).distinct().all()]
 
-            # Step 2: Cari user yang wilayah otorisasinya cocok dengan cakupan CAO
             user_ids_eligible = set()
             for uid in uploaded_user_ids:
                 user_otorisasi_rows = db.query(Detail_otorisasi_samsat).join(
@@ -991,16 +987,16 @@ def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
                 for row in user_otorisasi_rows:
                     if row.wilayah_cakupan_id in wilayah_cakupan_ids:
                         user_ids_eligible.add(uid)
-                        break  # cukup satu yang cocok
+                        break
 
-            # Step 3: Filter STNKData berdasarkan user yang eligible DAN cocok brand
-            query = db.query(STNKData).filter(STNKData.user_id.in_(user_ids_eligible))
+            query = db.query(STNKData).join(
+                master_excel,
+                STNKData.nomor_rangka == master_excel.norangka
+            ).filter(STNKData.user_id.in_(user_ids_eligible))
 
-            # MENCARI BRAND YANG COCOK
             if brand_names:
                 query = query.filter(STNKData.nama_brand.in_(brand_names))
 
-            # Eksekusi query
             stnk_entries = query.all()
 
         elif role == "admin":
@@ -1012,7 +1008,6 @@ def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
             ).all()
 
             wilayah_ids = set(row.wilayah_id for row in otorisasi_rows)
-
             pt_ids = set(row.glbm_pt_id for row in otorisasi_rows if row.glbm_pt_id is not None)
 
             pt_names = []
@@ -1035,7 +1030,10 @@ def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
                         user_ids_eligible.add(uid)
                         break
 
-            query = db.query(STNKData).filter(STNKData.user_id.in_(user_ids_eligible))
+            query = db.query(STNKData).join(
+                master_excel,
+                STNKData.nomor_rangka == master_excel.norangka
+            ).filter(STNKData.user_id.in_(user_ids_eligible))
 
             if pt_names:
                 query = query.filter(STNKData.nama_pt.in_(pt_names))
@@ -1063,10 +1061,12 @@ def get_all_stnk_data(current_user: dict = Depends(get_current_user)):
             entry_dict["image_url"] = image_url
             data.append(entry_dict)
 
+        print(data)
         return {"status": "success", "data": data}
 
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
     finally:
         db.close()
 
@@ -1510,63 +1510,80 @@ class MasterExcelSchema(BaseModel):
     kode_cabang: str
 
 
+
 @app.post("/import-excel")
 async def import_from_json(
     data: List[MasterExcelSchema],
     db: Session = Depends(get_db)
 ):
     try:
-        # Ambil semua norangka dari DB
-        existing_norangka_set = {row[0] for row in db.query(master_excel.norangka).all()}
+        if not data:
+            return JSONResponse(status_code=422, content={
+                "status": "error",
+                "status_code": 422,
+                "message": "Data tidak boleh kosong"
+            })
 
-        # Cek duplikat
-        duplikat_norangka = [item.norangka for item in data if item.norangka in existing_norangka_set]
+        if not db.query(master_excel).first():
+            return JSONResponse(status_code=404, content={
+                "status": "error",
+                "status_code": 404,
+                "message": "Referensi master tidak ditemukan"
+            })
 
-        if duplikat_norangka:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "message": "Import dibatalkan. Terdapat data duplikat.",
-                    "duplikat_norangka": duplikat_norangka
-                }
-            )
+        existing_norangka = {row[0] for row in db.query(master_excel.norangka).all()}
+        duplikat = [d.norangka for d in data if d.norangka in existing_norangka]
+        if duplikat:
+            return JSONResponse(status_code=409, content={
+                "status": "error",
+                "status_code": 409,
+                "message": "Data duplikat ditemukan",
+                "detail": duplikat
+            })
 
-        # Simpan semua data jika tidak ada duplikat
-        records = []
-        for item in data:
-            record = master_excel(
-                norangka=item.norangka,
-                nama_stnk=item.nama_stnk,
-                kode_tipe=item.kode_tipe,
-                tipe=item.tipe,
-                kode_model=item.kode_model,
-                model=item.model,
-                merk=item.merk,
-                kode_samsat=item.kode_samsat,
-                samsat=item.samsat,
-                kode_dealer=item.kode_dealer,
-                nama_dealer=item.nama_dealer,
-                kode_group=item.kode_group,
-                group_perusahaan=item.group_perusahaan,
-                tgl_mohon_stnk=item.tgl_mohon_stnk,
-                tgl_simpan=item.tgl_simpan,
-                nama_pt=item.nama_pt,
-                kode_cabang=item.kode_cabang
-            )
-            records.append(record)
+        for d in data:
+            if not d.norangka or d.norangka.strip() == "":
+                return JSONResponse(status_code=400, content={
+                    "status": "error",
+                    "status_code": 400,
+                    "message": "Nomor rangka tidak boleh kosong"
+                })
+
+        records = [
+            master_excel(
+                norangka=d.norangka,
+                nama_stnk=d.nama_stnk,
+                kode_tipe=d.kode_tipe,
+                tipe=d.tipe,
+                kode_model=d.kode_model,
+                model=d.model,
+                merk=d.merk,
+                kode_samsat=d.kode_samsat,
+                samsat=d.samsat,
+                kode_dealer=d.kode_dealer,
+                nama_dealer=d.nama_dealer,
+                kode_group=d.kode_group,
+                group_perusahaan=d.group_perusahaan,
+                tgl_mohon_stnk=d.tgl_mohon_stnk,
+                tgl_simpan=d.tgl_simpan,
+                nama_pt=d.nama_pt,
+                kode_cabang=d.kode_cabang
+            ) for d in data
+        ]
 
         db.bulk_save_objects(records)
         db.commit()
 
         return {
-            "message": f"{len(records)} data berhasil disimpan dari JSON."
+            "message": "Data berhasil disimpan",
+            "count": len(records),
+            "status_code": 200
         }
 
-    except HTTPException as he:
-        raise he
-
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Gagal menyimpan data dari JSON. Error: {str(e)}"
-        )
+        return JSONResponse(status_code=500, content={
+            "status": "error",
+            "status_code": 500,
+            "message": "Terjadi kesalahan pada server",
+            "detail": str(e)
+        })
